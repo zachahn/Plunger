@@ -15,7 +15,6 @@ import Observation
 @Observable
 final class ConfigStore {
     private static let configKey = "config"
-    private static let legacyEntriesKey = "entries" // flat [Entry], read once for migration
 
     private(set) var config = Config()
 
@@ -45,21 +44,10 @@ final class ConfigStore {
 
     // MARK: - Persistence
 
-    /// Reads the config, migrating the legacy flat entries list on first run, and
-    /// seeds the pick-lists from existing entries so an upgrade never starts blank.
+    /// Reads the config from UserDefaults.
     private func load() {
         if let stored: Config = decode(Self.configKey) {
             config = stored
-        }
-
-        if config.entries.isEmpty, config.paths.isEmpty, config.commands.isEmpty,
-           let legacy: [Entry] = decode(Self.legacyEntriesKey) {
-            config.entries = legacy
-        }
-
-        for entry in config.entries {
-            config.paths.appendUnique(entry.path)
-            config.commands.appendUnique(entry.command)
         }
     }
 
@@ -87,7 +75,7 @@ final class ConfigStore {
 
     /// Rewrites `path` to `newPath` in place, preserving its position. A no-op
     /// when `path` isn't saved, `newPath` is blank, or `newPath` is already
-    /// saved under a different entry.
+    /// saved.
     func updatePath(_ path: String, to newPath: String) {
         guard !newPath.isEmpty, newPath == path || !config.paths.contains(newPath) else { return }
         guard let index = config.paths.firstIndex(of: path) else { return }
@@ -97,7 +85,7 @@ final class ConfigStore {
 
     /// Rewrites `command` to `newCommand` in place, preserving its position.
     /// A no-op when `command` isn't saved, `newCommand` is blank, or
-    /// `newCommand` is already saved under a different entry.
+    /// `newCommand` is already saved.
     func updateCommand(_ command: String, to newCommand: String) {
         guard !newCommand.isEmpty, newCommand == command || !config.commands.contains(newCommand) else { return }
         guard let index = config.commands.firstIndex(of: command) else { return }

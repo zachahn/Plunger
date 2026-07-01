@@ -57,7 +57,7 @@ private struct CommandLauncher: View {
         } else {
             ForEach(store.config.commands, id: \.self) { command in
                 Button(command) {
-                    Launcher.launch(Entry(path: path, command: command))
+                    Launcher.launch(path: path, command: command)
                 }
             }
         }

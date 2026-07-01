@@ -2,8 +2,8 @@
 //  Launcher.swift
 //  Plunger
 //
-//  Opens a Ghostty terminal tab for an entry by running an AppleScript via
-//  osascript. Ported from the Go app's launchEntry and appleScriptString.
+//  Opens a Ghostty terminal tab for a (path, command) pair by running an
+//  AppleScript via osascript.
 //
 
 import Foundation
@@ -17,11 +17,11 @@ enum Launcher {
         return "\"" + escaped + "\""
     }
 
-    /// Opens the entry in Ghostty: a new window when none are open, otherwise a
-    /// new tab in the front window.
-    static func launch(_ entry: Entry) {
-        let path = appleScriptString(entry.path)
-        let command = appleScriptString(entry.command)
+    /// Opens Ghostty at `path` running `command`: a new window when none are
+    /// open, otherwise a new tab in the front window.
+    static func launch(path: String, command: String) {
+        let path = appleScriptString(path)
+        let command = appleScriptString(command)
         let script = """
         tell application "Ghostty"
             if (count of windows) = 0 then

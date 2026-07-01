@@ -2,24 +2,11 @@
 //  Config.swift
 //  Plunger
 //
-//  The persisted state: saved (path, command) tuples plus reusable pick-lists
-//  of paths and commands. Ported from the Go app's `config` struct, which stored
-//  the same shape in macOS user defaults.
+//  The persisted state: pick-lists of paths and commands, stored as a
+//  property-list blob in macOS user defaults.
 //
 
 import Foundation
-
-struct Entry: Codable, Hashable, Identifiable {
-    var path: String
-    var command: String
-
-    var id: String { path + "\u{0}" + command }
-
-    var label: String { path + ": " + command }
-
-    /// Like `label`, but abbreviates the home directory to `~` for display.
-    var displayLabel: String { displayPath(path) + ": " + command }
-}
 
 /// Abbreviates the home directory to `~` for display. The underlying path is
 /// left untouched; this is purely cosmetic.
@@ -32,7 +19,6 @@ func displayPath(_ path: String) -> String {
 struct Config: Codable {
     var paths: [String] = []
     var commands: [String] = []
-    var entries: [Entry] = []
 }
 
 extension Array where Element == String {

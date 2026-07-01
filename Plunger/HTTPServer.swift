@@ -169,14 +169,14 @@ private struct LaunchBody: Decodable {
 /// client gets JSON.
 enum RouteOutcome: Equatable {
     case respond(HTTPResponse)
-    case launch(Entry, success: HTTPResponse)
+    case launch(path: String, command: String, success: HTTPResponse)
 
     static func == (lhs: RouteOutcome, rhs: RouteOutcome) -> Bool {
         switch (lhs, rhs) {
         case let (.respond(a), .respond(b)):
             return same(a, b)
-        case let (.launch(a, sa), .launch(b, sb)):
-            return a == b && same(sa, sb)
+        case let (.launch(pa, ca, sa), .launch(pb, cb, sb)):
+            return pa == pb && ca == cb && same(sa, sb)
         default:
             return false
         }
@@ -262,7 +262,7 @@ enum Router {
             return .respond(isForm ? .unauthorized : .forbidden)
         }
 
-        guard let parsed = entry(from: request, isForm: isForm) else {
+        guard let parsed = parse(request, isForm: isForm) else {
             return .respond(.badRequest)
         }
         guard store.hasPath(parsed.path), store.hasCommand(parsed.command) else {
@@ -270,22 +270,22 @@ enum Router {
         }
 
         let success = isForm
-            ? HTTPResponse.html(HTMLPage.launched(parsed))
+            ? HTTPResponse.html(HTMLPage.launched(path: parsed.path, command: parsed.command))
             : HTTPResponse.launched
-        return .launch(parsed, success: success)
+        return .launch(path: parsed.path, command: parsed.command, success: success)
     }
 
     /// Reads (path, command) from the body in whichever encoding the request used.
-    private static func entry(from request: HTTPRequest, isForm: Bool) -> Entry? {
+    private static func parse(_ request: HTTPRequest, isForm: Bool) -> (path: String, command: String)? {
         if isForm {
             let fields = FormDecoder.decode(request.body)
             guard let path = fields["path"], let command = fields["command"] else { return nil }
-            return Entry(path: path, command: command)
+            return (path, command)
         }
         guard let body = try? JSONDecoder().decode(LaunchBody.self, from: request.body) else {
             return nil
         }
-        return Entry(path: body.path, command: body.command)
+        return (body.path, body.command)
     }
 }
 
@@ -372,10 +372,10 @@ enum HTMLPage {
     }
 
     /// The success page after a launch.
-    static func launched(_ entry: Entry) -> String {
+    static func launched(path: String, command: String) -> String {
         Template.render(Template.load("launched.html"), [
-            "command": escape(entry.command),
-            "path": escape(displayPath(entry.path)),
+            "command": escape(command),
+            "path": escape(displayPath(path)),
         ])
     }
 
@@ -493,8 +493,8 @@ final class HTTPServer: @unchecked Sendable {
             switch Router.route(request, store: view) {
             case let .respond(response):
                 HTTPServer.respond(connection, with: response)
-            case let .launch(entry, success):
-                Launcher.launch(entry)
+            case let .launch(path, command, success):
+                Launcher.launch(path: path, command: command)
                 HTTPServer.respond(connection, with: success)
             }
         }

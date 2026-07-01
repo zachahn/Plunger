@@ -3,8 +3,8 @@
 //  PlungerTests
 //
 //  Covers the HTTP request parser and the pure routing logic. Routing stops at
-//  the decision point: a valid /launch yields a `.launch(Entry)` outcome rather
-//  than spawning Ghostty, so these tests never touch the launcher.
+//  the decision point: a valid /launch yields a `.launch` outcome rather than
+//  spawning Ghostty, so these tests never touch the launcher.
 //
 
 import Foundation
@@ -221,7 +221,7 @@ struct RouterTests {
                     body: #"{"path":"/work","command":"/bin/zsh"}"#),
             store: storeView()
         )
-        #expect(outcome == .launch(Entry(path: "/work", command: "/bin/zsh"), success: .launched))
+        #expect(outcome == .launch(path: "/work", command: "/bin/zsh", success: .launched))
     }
 
     @Test func wrongMethodOnKnownRouteIsMethodNotAllowed() {
@@ -295,11 +295,12 @@ struct RouterTests {
                     body: "path=%2Fwork&command=%2Fbin%2Fzsh"),
             store: storeView()
         )
-        guard case let .launch(entry, success) = outcome else {
+        guard case let .launch(path, command, success) = outcome else {
             Issue.record("expected a launch outcome")
             return
         }
-        #expect(entry == Entry(path: "/work", command: "/bin/zsh"))
+        #expect(path == "/work")
+        #expect(command == "/bin/zsh")
         #expect(success.contentType.hasPrefix("text/html"))
         #expect(success.body.contains("Launched"))
     }
