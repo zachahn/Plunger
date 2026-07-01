@@ -64,7 +64,7 @@ enum Prompt {
             if CommandResolver.programExists(value) { return value }
             let invalid = NSAlert()
             invalid.messageText = "Command not found"
-            invalid.informativeText = "\"\(value)\" doesn't resolve to an existing executable."
+            invalid.informativeText = "\"\(value)\" must be an absolute path to an existing executable. Press Resolve to find it on your PATH."
             invalid.addButton(withTitle: "OK")
             invalid.runModal()
         }

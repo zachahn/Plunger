@@ -91,7 +91,7 @@ final class ConfigStore {
     }
 
     func addCommand(_ command: String) {
-        config.commands.appendUnique(CommandResolver.resolveCommand(command))
+        config.commands.appendUnique(command)
         save()
     }
 

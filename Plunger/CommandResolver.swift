@@ -59,14 +59,20 @@ enum CommandResolver {
         return resolveProgram(trimmed)
     }
 
-    /// Reports whether `command`'s first token names an existing executable file,
-    /// either as a literal path or by resolving it like `resolveProgram` would.
+    /// Reports whether `command`'s first token is itself an absolute path to an
+    /// existing executable file. Unlike `resolveProgram`, it does no PATH or
+    /// common-bin lookup: a bare name like `git` fails until the user presses
+    /// Resolve to turn it into an absolute path.
     static func programExists(_ command: String) -> Bool {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         let program = trimmed.firstIndex(of: " ").map { String(trimmed[..<$0]) } ?? trimmed
-        let resolved = resolveProgram(program)
-        return FileManager.default.isExecutableFile(atPath: resolved)
+        guard program.hasPrefix("/") else { return false }
+        var isDirectory: ObjCBool = false
+        let fileManager = FileManager.default
+        return fileManager.isExecutableFile(atPath: program)
+            && fileManager.fileExists(atPath: program, isDirectory: &isDirectory)
+            && !isDirectory.boolValue
     }
 
     /// Like `resolveProgram`, but collects every match across the process PATH and
