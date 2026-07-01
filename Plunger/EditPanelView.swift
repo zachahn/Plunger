@@ -79,7 +79,7 @@ private struct HTTPServerColumn: View {
             }
             LabeledContent("Port") {
                 HStack {
-                    TextField("Port", text: $portText)
+                    TextField("", text: $portText)
                         .frame(width: 80)
                         .onSubmit(applyPort)
                     Button("Apply", action: applyPort)
@@ -101,7 +101,8 @@ private struct HTTPServerColumn: View {
                         .textSelection(.enabled)
                         .lineLimit(2)
                         .truncationMode(.middle)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
 
                     HStack {
                         Button("Copy") {
