@@ -2,9 +2,9 @@
 //  MenuContent.swift
 //  Plunger
 //
-//  Builds the menu-bar menu tree. Ported from the Go app's menuItems and its
-//  submenu builders. The top level lists saved entries that launch on click,
-//  then management submenus for entries and the reusable pick-lists.
+//  Builds the menu-bar menu tree. The top level lists saved paths; each opens a
+//  submenu of saved commands that launch on click. Below are management submenus
+//  for the reusable paths and commands lists.
 //
 
 import AppKit
@@ -14,19 +14,15 @@ struct MenuContent: View {
     @Bindable var store: ConfigStore
 
     var body: some View {
-        ForEach(Array(store.config.entries.enumerated()), id: \.element.id) { _, entry in
-            Button(entry.displayLabel) { Launcher.launch(entry) }
+        ForEach(store.config.paths, id: \.self) { path in
+            Menu(displayPath(path)) {
+                CommandLauncher(store: store, path: path)
+            }
         }
 
-        if !store.config.entries.isEmpty {
+        if !store.config.paths.isEmpty {
             Divider()
         }
-
-        Menu("New") { NewMenu(store: store) }
-        Menu("Edit") { EditMenu(store: store) }
-        Menu("Delete") { DeleteMenu(store: store) }
-
-        Divider()
 
         Menu("Paths") { PathsMenu(store: store) }
         Menu("Commands") { CommandsMenu(store: store) }
@@ -38,35 +34,8 @@ struct MenuContent: View {
     }
 }
 
-/// The "New" tree: pick a saved path, then a saved command, to create a tuple —
-/// plus a typed fallback for values not yet in the lists.
-private struct NewMenu: View {
-    @Bindable var store: ConfigStore
-
-    var body: some View {
-        ForEach(store.config.paths, id: \.self) { path in
-            Menu(displayPath(path)) {
-                CommandPicker(store: store, path: path)
-            }
-        }
-
-        if !store.config.paths.isEmpty {
-            Divider()
-        }
-
-        Button("Type new…") {
-            guard let entry = Prompt.entry(
-                title: "New",
-                info: "Set the path and command to run.",
-                prefill: Entry(path: "", command: "")
-            ) else { return }
-            store.addEntry(entry)
-        }
-    }
-}
-
-/// Lists saved commands; clicking one creates the (path, command) tuple.
-private struct CommandPicker: View {
+/// Lists saved commands; clicking one launches the (path, command) tuple.
+private struct CommandLauncher: View {
     @Bindable var store: ConfigStore
     let path: String
 
@@ -76,43 +45,8 @@ private struct CommandPicker: View {
         } else {
             ForEach(store.config.commands, id: \.self) { command in
                 Button(command) {
-                    store.addEntry(Entry(path: path, command: command))
+                    Launcher.launch(Entry(path: path, command: command))
                 }
-            }
-        }
-    }
-}
-
-/// Lists saved tuples; clicking one opens the edit dialog.
-private struct EditMenu: View {
-    @Bindable var store: ConfigStore
-
-    var body: some View {
-        ForEach(Array(store.config.entries.enumerated()), id: \.element.id) { index, entry in
-            Button(entry.displayLabel) {
-                guard let edited = Prompt.entry(
-                    title: "Edit",
-                    info: "Leave a field blank to keep its current value.",
-                    prefill: entry
-                ) else { return }
-                store.updateEntry(at: index, with: edited)
-            }
-        }
-    }
-}
-
-/// Lists saved tuples; clicking one confirms and deletes it.
-private struct DeleteMenu: View {
-    @Bindable var store: ConfigStore
-
-    var body: some View {
-        ForEach(Array(store.config.entries.enumerated()), id: \.element.id) { index, entry in
-            Button(entry.displayLabel) {
-                guard Prompt.confirmDelete(
-                    message: "Delete entry?",
-                    info: entry.displayLabel
-                ) else { return }
-                store.deleteEntry(at: index)
             }
         }
     }
