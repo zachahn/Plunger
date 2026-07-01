@@ -92,18 +92,47 @@ enum Prompt {
                 return
             }
 
-            let menu = NSMenu()
-            for candidate in candidates {
-                let item = menu.addItem(withTitle: candidate, action: #selector(choose(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = rest
-            }
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.frame.height), in: sender)
+            // A popup NSMenu doesn't track clicks reliably while an NSAlert's
+            // modal session is running, so offer the choice via a nested alert
+            // (the same pattern the "Command not found" alert already uses)
+            // with radio buttons instead.
+            guard let chosen = chooseCandidate(candidates) else { return }
+            field.stringValue = rest.map { chosen + " " + $0 } ?? chosen
         }
 
-        @objc private func choose(_ sender: NSMenuItem) {
-            let rest = sender.representedObject as? String
-            field.stringValue = rest.map { sender.title + " " + $0 } ?? sender.title
+        private func chooseCandidate(_ candidates: [String]) -> String? {
+            let alert = NSAlert()
+            alert.messageText = "Multiple matches found"
+            alert.informativeText = "Choose which one to use."
+            alert.addButton(withTitle: "Choose")
+            alert.addButton(withTitle: "Cancel")
+
+            let rowHeight: CGFloat = 20
+            let stack = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: rowHeight * CGFloat(candidates.count)))
+            var buttons: [NSButton] = []
+            for (index, candidate) in candidates.enumerated() {
+                let y = CGFloat(candidates.count - 1 - index) * rowHeight
+                let radio = NSButton(radioButtonWithTitle: candidate, target: self, action: #selector(selectRadio(_:)))
+                radio.frame = NSRect(x: 0, y: y, width: 320, height: rowHeight)
+                radio.state = index == 0 ? .on : .off
+                stack.addSubview(radio)
+                buttons.append(radio)
+            }
+            radioButtons = buttons
+            alert.accessoryView = stack
+
+            guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+            let selectedIndex = buttons.firstIndex { $0.state == .on } ?? 0
+            return candidates[selectedIndex]
+        }
+
+        // Plain NSButton radio buttons don't auto-group by superview, so each
+        // click must turn off its siblings by hand.
+        private var radioButtons: [NSButton] = []
+        @objc private func selectRadio(_ sender: NSButton) {
+            for button in radioButtons {
+                button.state = button === sender ? .on : .off
+            }
         }
     }
 
