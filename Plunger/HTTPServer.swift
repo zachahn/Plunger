@@ -5,10 +5,14 @@
 //  A dependency-free HTTP/1.1 server that drives launches programmatically. It
 //  is strictly launch-only: it exposes read-only views of the saved lists plus
 //  Launcher.launch, and reaches no mutation method on the store. The listener
-//  binds every interface (0.0.0.0), so the launch API is reachable from the
-//  LAN; the bearer token is the only guard, and it travels over plaintext HTTP.
-//  The app runs without the App Sandbox, so binding the socket needs no
-//  entitlement.
+//  binds every interface (0.0.0.0) on the configured port (default 8765), so
+//  the launch API is reachable from the LAN. Two guards sit in front: a peer
+//  filter (see PeerFilter) drops any connection whose source IP is not in an
+//  allowed network — loopback, Tailscale (100.64.0.0/10), LAN, or any — and the
+//  bearer token guards every authed route on top. The token travels over
+//  plaintext HTTP. The app runs without the App Sandbox, so binding the socket
+//  needs no entitlement. Changing the port calls restart() to rebind without
+//  relaunching; network changes take effect on the next connection.
 //
 //  Auth is HTTP Basic with the fixed username "plunger" and the generated token
 //  as the password, so a browser prompts once and caches it. The bearer path is
@@ -393,24 +397,39 @@ enum HTMLPage {
 
 // MARK: - Server
 
-final class HTTPServer: @unchecked Sendable {
-    static let port: UInt16 = 8765
-
-    /// The address shown in the menu. The listener binds every interface, so a
+@MainActor
+@Observable
+final class HTTPServer {
+    /// The address for a given port. The listener binds every interface, so a
     /// LAN client reaches it at this host's name; the loopback form still works
     /// locally.
-    static var url: String {
+    nonisolated static func url(port: UInt16) -> String {
         let host = ProcessInfo.processInfo.hostName
         return "http://\(host):\(port)"
     }
 
+    /// Whether the listener is bound. `.failed` carries the port that could not
+    /// be bound, so the UI can explain what went wrong (usually a port in use).
+    enum Status: Equatable {
+        case stopped
+        case running
+        case failed(port: UInt16)
+    }
+
+    /// The current bind state, updated from the listener's state handler. UI
+    /// observes this to show a bind failure.
+    private(set) var status: Status = .stopped
+
     /// A read-only snapshot taken on the main actor before routing, so the
     /// off-actor connection handlers never touch the @MainActor store directly.
     private let snapshot: @MainActor () -> Router.StoreView
+    /// Reads the configured port on the main actor at bind time.
+    private let portProvider: @MainActor () -> UInt16
+    /// Reads the allowed source networks on the main actor per connection.
+    private let filterProvider: @MainActor () -> PeerFilter
     private let queue = DispatchQueue(label: "com.zachahn.Plunger.http")
     private var listener: NWListener?
 
-    @MainActor
     init(store: ConfigStore) {
         self.snapshot = {
             Router.StoreView(
@@ -421,34 +440,99 @@ final class HTTPServer: @unchecked Sendable {
                 hasCommand: { store.hasCommand($0) }
             )
         }
+        self.portProvider = { store.config.port }
+        self.filterProvider = { PeerFilter(allowed: store.config.allowedPeers) }
     }
 
-    /// Binds 0.0.0.0:8765 (every interface) and begins accepting connections.
-    /// Failures are logged; the app keeps running without the server.
+    /// Binds 0.0.0.0 on the configured port (every interface) and begins
+    /// accepting connections. Bind failures set `status` to `.failed`; the app
+    /// keeps running without the server.
     func start() {
         guard listener == nil else { return }
+        let configuredPort = portProvider()
         let parameters = NWParameters.tcp
 
-        guard let port = NWEndpoint.Port(rawValue: Self.port),
+        guard let port = NWEndpoint.Port(rawValue: configuredPort),
               let listener = try? NWListener(using: parameters, on: port) else {
-            NSLog("Plunger: failed to create HTTP listener on port \(Self.port)")
+            NSLog("Plunger: failed to create HTTP listener on port \(configuredPort)")
+            status = .failed(port: configuredPort)
             return
         }
         self.listener = listener
 
+        listener.stateUpdateHandler = { [weak self] state in
+            self?.listenerStateChanged(state, port: configuredPort)
+        }
         listener.newConnectionHandler = { [weak self] connection in
             self?.handle(connection)
         }
         listener.start(queue: queue)
     }
 
-    private func handle(_ connection: NWConnection) {
-        connection.start(queue: queue)
-        receive(connection, accumulated: Data())
+    /// Tears down the current listener and rebinds on the configured port. Call
+    /// after changing the port so the change takes effect without relaunching.
+    func restart() {
+        listener?.cancel()
+        listener = nil
+        status = .stopped
+        start()
+    }
+
+    /// Mirrors the listener's state into `status` on the main actor. `.ready`
+    /// means the bind succeeded; `.failed` usually means the port is in use.
+    private nonisolated func listenerStateChanged(_ state: NWListener.State, port: UInt16) {
+        switch state {
+        case .ready:
+            Task { @MainActor in self.status = .running }
+        case .failed:
+            Task { @MainActor in
+                self.listener?.cancel()
+                self.listener = nil
+                self.status = .failed(port: port)
+            }
+        default:
+            break
+        }
+    }
+
+    private nonisolated func handle(_ connection: NWConnection) {
+        // Drop the connection unless its source IP is in an allowed category.
+        // Filtering here, before any bytes are read, keeps a blocked peer from
+        // reaching the router or the token check.
+        let peer = Self.peerIP(of: connection)
+        Task { @MainActor in
+            let filter = filterProvider()
+            guard let peer, filter.allows(peer) else {
+                connection.cancel()
+                return
+            }
+            connection.start(queue: queue)
+            receive(connection, accumulated: Data())
+        }
+    }
+
+    /// Extracts the remote peer's IP from a connection's endpoint, or nil when
+    /// it can't be read (in which case the caller drops the connection).
+    private nonisolated static func peerIP(of connection: NWConnection) -> PeerIP? {
+        switch connection.endpoint {
+        case let .hostPort(host, _):
+            switch host {
+            case let .ipv4(address):
+                return PeerIP(rawBytes: address.rawValue)
+            case let .ipv6(address):
+                return PeerIP(rawBytes: address.rawValue)
+            case let .name(name, _):
+                return PeerIP(name)
+            @unknown default:
+                return nil
+            }
+        default:
+            return nil
+        }
     }
 
     /// Reads until the head and the declared body are both present, then routes.
-    private func receive(_ connection: NWConnection, accumulated: Data) {
+    private nonisolated func receive(_ connection: NWConnection, accumulated: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] chunk, _, isComplete, error in
             guard let self else { return }
 
@@ -487,7 +571,7 @@ final class HTTPServer: @unchecked Sendable {
 
     /// Hops to the main actor to snapshot the store, routes, and either writes a
     /// response or launches and then writes the success response.
-    private func dispatch(_ request: HTTPRequest, on connection: NWConnection) {
+    private nonisolated func dispatch(_ request: HTTPRequest, on connection: NWConnection) {
         Task { @MainActor [snapshot] in
             let view = snapshot()
             switch Router.route(request, store: view) {

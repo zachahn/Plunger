@@ -58,9 +58,11 @@ final class FloatingPanel: NSPanel {
 final class EditPanelController {
     private var panel: FloatingPanel?
     private let store: ConfigStore
+    private let server: HTTPServer
 
-    init(store: ConfigStore) {
+    init(store: ConfigStore, server: HTTPServer) {
         self.store = store
+        self.server = server
     }
 
     func toggle() {
@@ -80,7 +82,7 @@ final class EditPanelController {
 
     private func makePanel() -> FloatingPanel {
         let panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 440))
-        panel.contentView = NSHostingView(rootView: EditPanelView(store: store))
+        panel.contentView = NSHostingView(rootView: EditPanelView(store: store, server: server))
         return panel
     }
 }

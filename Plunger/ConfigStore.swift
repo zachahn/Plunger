@@ -18,19 +18,30 @@ final class ConfigStore {
 
     private(set) var config = Config()
 
+    /// The shared bearer token for the local HTTP server. Stored (not computed
+    /// off AuthToken) so @Observable views refresh when it is regenerated.
+    private(set) var token: String
+
     private let defaults: UserDefaults
-    private let authToken: AuthToken
+    private var authToken: AuthToken
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.authToken = AuthToken(defaults: defaults)
+        let authToken = AuthToken(defaults: defaults)
+        self.authToken = authToken
+        self.token = authToken.value
         load()
     }
 
-    // MARK: - Read-only queries
+    // MARK: - Token
 
-    /// The shared bearer token for the local HTTP server.
-    var token: String { authToken.value }
+    /// Replaces the HTTP server token with a fresh random one. Clients using the
+    /// old token stop working until they pick up the new value.
+    func regenerateToken() {
+        token = authToken.regenerate()
+    }
+
+    // MARK: - Read-only queries
 
     /// Reports whether `path` is one of the saved paths.
     func hasPath(_ path: String) -> Bool {
@@ -100,6 +111,22 @@ final class ConfigStore {
 
     func deleteCommand(_ command: String) {
         config.commands.removeAll { $0 == command }
+        save()
+    }
+
+    /// Sets the HTTP server port. A no-op when unchanged. The caller is
+    /// responsible for restarting the server so the new port takes effect.
+    func setPort(_ port: UInt16) {
+        guard port != config.port else { return }
+        config.port = port
+        save()
+    }
+
+    /// Sets the source networks the server accepts. Takes effect on the next
+    /// connection; no restart needed, since the server reads it per request.
+    func setAllowedPeers(_ peers: Set<PeerCategory>) {
+        guard peers != config.allowedPeers else { return }
+        config.allowedPeers = peers
         save()
     }
 }

@@ -16,9 +16,10 @@ struct PlungerApp: App {
 
     init() {
         let store = ConfigStore()
+        let server = HTTPServer(store: store)
         _store = State(initialValue: store)
-        _server = State(initialValue: HTTPServer(store: store))
-        _editPanel = State(initialValue: EditPanelController(store: store))
+        _server = State(initialValue: server)
+        _editPanel = State(initialValue: EditPanelController(store: store, server: server))
     }
 
     var body: some Scene {

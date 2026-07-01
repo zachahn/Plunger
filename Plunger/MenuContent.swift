@@ -30,7 +30,7 @@ struct MenuContent: View {
         Divider()
 
         Section("HTTP server") {
-            Text(HTTPServer.url)
+            Text(HTTPServer.url(port: store.config.port))
             Text("User: \(Router.username)")
             Button("Copy token") {
                 let pasteboard = NSPasteboard.general

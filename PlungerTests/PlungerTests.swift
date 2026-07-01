@@ -358,3 +358,92 @@ struct HTMLPageTests {
         #expect(HTMLPage.escape(#"<a> & "b""#) == "&lt;a&gt; &amp; &quot;b&quot;")
     }
 }
+
+// MARK: - Peer IP parsing
+
+@Suite("PeerIP")
+struct PeerIPTests {
+    @Test func parsesIPv4() {
+        #expect(PeerIP("100.64.0.1")?.bytes == [100, 64, 0, 1])
+        #expect(PeerIP("127.0.0.1")?.isIPv4 == true)
+    }
+
+    @Test func parsesIPv6Loopback() {
+        #expect(PeerIP("::1")?.bytes == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+    }
+
+    @Test func collapsesIPv4MappedIPv6() {
+        // ::ffff:100.64.0.1 should reduce to the 4-byte IPv4 form.
+        let ip = PeerIP("::ffff:100.64.0.1")
+        #expect(ip?.isIPv4 == true)
+        #expect(ip?.bytes == [100, 64, 0, 1])
+    }
+
+    @Test func stripsZoneID() {
+        #expect(PeerIP("fe80::1%en0") != nil)
+    }
+
+    @Test func rejectsGarbage() {
+        #expect(PeerIP("not-an-ip") == nil)
+        #expect(PeerIP("") == nil)
+    }
+}
+
+// MARK: - Peer filtering
+
+@Suite("PeerFilter")
+struct PeerFilterTests {
+    private func ip(_ s: String) -> PeerIP { PeerIP(s)! }
+
+    @Test func emptySetAllowsNothing() {
+        let filter = PeerFilter(allowed: [])
+        #expect(filter.allows(ip("127.0.0.1")) == false)
+        #expect(filter.allows(ip("100.64.0.1")) == false)
+    }
+
+    @Test func loopbackCategory() {
+        let filter = PeerFilter(allowed: [.loopback])
+        #expect(filter.allows(ip("127.0.0.1")))
+        #expect(filter.allows(ip("::1")))
+        #expect(filter.allows(ip("100.64.0.1")) == false)
+        #expect(filter.allows(ip("192.168.1.5")) == false)
+    }
+
+    @Test func tailscaleCategory() {
+        let filter = PeerFilter(allowed: [.tailscale])
+        // 100.64.0.0/10 spans 100.64.x through 100.127.x.
+        #expect(filter.allows(ip("100.64.0.1")))
+        #expect(filter.allows(ip("100.100.50.2")))
+        #expect(filter.allows(ip("100.127.255.254")))
+        // Just outside the range.
+        #expect(filter.allows(ip("100.63.255.255")) == false)
+        #expect(filter.allows(ip("100.128.0.0")) == false)
+        #expect(filter.allows(ip("127.0.0.1")) == false)
+    }
+
+    @Test func localNetworkCategory() {
+        let filter = PeerFilter(allowed: [.localNetwork])
+        #expect(filter.allows(ip("10.0.0.1")))
+        #expect(filter.allows(ip("172.16.5.5")))
+        #expect(filter.allows(ip("172.31.0.1")))
+        #expect(filter.allows(ip("192.168.1.1")))
+        #expect(filter.allows(ip("169.254.1.1")))
+        // 172.32 is outside 172.16/12.
+        #expect(filter.allows(ip("172.32.0.1")) == false)
+        #expect(filter.allows(ip("100.64.0.1")) == false)
+    }
+
+    @Test func anyCategoryAllowsEverything() {
+        let filter = PeerFilter(allowed: [.any])
+        #expect(filter.allows(ip("8.8.8.8")))
+        #expect(filter.allows(ip("100.64.0.1")))
+        #expect(filter.allows(ip("127.0.0.1")))
+    }
+
+    @Test func categoriesCombine() {
+        let filter = PeerFilter(allowed: [.loopback, .tailscale])
+        #expect(filter.allows(ip("127.0.0.1")))
+        #expect(filter.allows(ip("100.64.0.1")))
+        #expect(filter.allows(ip("192.168.1.1")) == false)
+    }
+}

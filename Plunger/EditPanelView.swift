@@ -3,11 +3,15 @@
 //  Plunger
 //
 //  The persistent edit panel's content (see FloatingPanel.swift): a TabView
-//  with one full-width Table per tab (Paths, Commands). Click selects a row;
-//  double-click or the right-click menu edits it (in a sheet); Delete key or
-//  the − button removes it. A +/− bar under each table handles add/remove,
-//  since SwiftUI's Table has no built-in one. Rows are sorted alphabetically
-//  for display; the stored order in ConfigStore is left untouched.
+//  with a Table tab each for Paths and Commands, plus an HTTP Server tab. In a
+//  table tab, click selects a row; double-click or the right-click menu edits
+//  it (in a sheet); Delete key or the − button removes it. A +/− bar under each
+//  table handles add/remove, since SwiftUI's Table has no built-in one. Rows
+//  are sorted alphabetically for display; the stored order in ConfigStore is
+//  left untouched. The HTTP Server tab shows the URL and the fixed "plunger"
+//  username, lets the user change the port (rebinding the listener at once),
+//  shows the token with Copy and Regenerate actions, and offers checkboxes for
+//  the source networks the server accepts (loopback, Tailscale, LAN, or any).
 //
 
 import SwiftUI
@@ -31,6 +35,7 @@ private extension Array where Element == String {
 
 struct EditPanelView: View {
     @Bindable var store: ConfigStore
+    let server: HTTPServer
 
     var body: some View {
         TabView {
@@ -38,9 +43,128 @@ struct EditPanelView: View {
                 .tabItem { Label("Paths", systemImage: "folder") }
             CommandsColumn(store: store)
                 .tabItem { Label("Commands", systemImage: "terminal") }
+            HTTPServerColumn(store: store, server: server)
+                .tabItem { Label("HTTP Server", systemImage: "network") }
         }
         .padding(.top, 8)
         .frame(minWidth: 360, minHeight: 420)
+    }
+}
+
+/// The HTTP server tab: read-only connection details plus token actions. The
+/// username is fixed to "plunger" (see Router.username); the token is random
+/// and can only be regenerated, not typed. Regenerating invalidates any client
+/// still using the old token.
+private struct HTTPServerColumn: View {
+    @Bindable var store: ConfigStore
+    @Bindable var server: HTTPServer
+    @State private var confirmRegenerate = false
+    @State private var portText = ""
+
+    /// The typed port parsed to a valid 1–65535 value, or nil when invalid.
+    private var parsedPort: UInt16? {
+        guard let value = UInt16(portText.trimmingCharacters(in: .whitespaces)), value > 0 else {
+            return nil
+        }
+        return value
+    }
+
+    var body: some View {
+        Form {
+            LabeledContent("URL") {
+                Text(HTTPServer.url(port: store.config.port)).textSelection(.enabled)
+            }
+            LabeledContent("Username") {
+                Text(Router.username).textSelection(.enabled)
+            }
+            LabeledContent("Port") {
+                HStack {
+                    TextField("Port", text: $portText)
+                        .frame(width: 80)
+                        .onSubmit(applyPort)
+                    Button("Apply", action: applyPort)
+                        .disabled(parsedPort == nil || parsedPort == store.config.port)
+                }
+            }
+            if case .failed(let port) = server.status {
+                Label(
+                    "Could not bind port \(String(port)). It may be in use by another app — try a different port.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .foregroundStyle(.red)
+                .font(.callout)
+            }
+            LabeledContent("Token") {
+                VStack(alignment: .trailing, spacing: 8) {
+                    Text(store.token)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    HStack {
+                        Button("Copy") {
+                            let pasteboard = NSPasteboard.general
+                            pasteboard.clearContents()
+                            pasteboard.setString(store.token, forType: .string)
+                        }
+                        Button("Regenerate…") { confirmRegenerate = true }
+                    }
+                }
+            }
+
+            Section("Allowed networks") {
+                ForEach(PeerCategory.allCases) { category in
+                    Toggle(isOn: binding(for: category)) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(category.label)
+                            Text(category.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if store.config.allowedPeers.isEmpty {
+                    Label(
+                        "No networks are allowed — the server will refuse every connection.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .foregroundStyle(.orange)
+                    .font(.callout)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { portText = String(store.config.port) }
+        .alert("Regenerate token?", isPresented: $confirmRegenerate) {
+            Button("Regenerate", role: .destructive) { store.regenerateToken() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Any client still using the current token will stop working until it picks up the new one.")
+        }
+    }
+
+    /// A checkbox binding for one network category, backed by the stored set.
+    /// Changes take effect on the next connection; no restart needed.
+    private func binding(for category: PeerCategory) -> Binding<Bool> {
+        Binding(
+            get: { store.config.allowedPeers.contains(category) },
+            set: { isOn in
+                var peers = store.config.allowedPeers
+                if isOn { peers.insert(category) } else { peers.remove(category) }
+                store.setAllowedPeers(peers)
+            }
+        )
+    }
+
+    /// Saves the typed port (if valid and changed) and rebinds the listener so
+    /// it takes effect at once. Resets the field to the saved value afterward.
+    private func applyPort() {
+        guard let port = parsedPort, port != store.config.port else { return }
+        store.setPort(port)
+        server.restart()
+        portText = String(store.config.port)
     }
 }
 
