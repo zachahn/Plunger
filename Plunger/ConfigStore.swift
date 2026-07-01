@@ -8,6 +8,7 @@
 //  and encoding so an existing oiio defaults file would still read.
 //
 
+import AppKit
 import Foundation
 import Observation
 
@@ -39,6 +40,13 @@ final class ConfigStore {
     /// old token stop working until they pick up the new value.
     func regenerateToken() {
         token = authToken.regenerate()
+    }
+
+    /// Copies the current token to the general pasteboard.
+    func copyToken() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(token, forType: .string)
     }
 
     // MARK: - Read-only queries

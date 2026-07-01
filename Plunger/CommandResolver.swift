@@ -75,39 +75,6 @@ enum CommandResolver {
             && !isDirectory.boolValue
     }
 
-    /// Like `resolveProgram`, but collects every match across the process PATH and
-    /// the common bin directories instead of stopping at the first. Names like
-    /// `python3` often exist in more than one of these, so callers that want to
-    /// surface the ambiguity to the user can use this instead.
-    static func resolveProgramCandidates(_ program: String) -> [String] {
-        if program.contains("/") {
-            return [program] // already a path; leave it alone
-        }
-        let fileManager = FileManager.default
-        var seenDirs = Set<String>()
-        var candidates: [String] = []
-
-        func consider(_ dir: String) {
-            guard seenDirs.insert(dir).inserted else { return }
-            let candidate = (dir as NSString).appendingPathComponent(program)
-            var isDirectory: ObjCBool = false
-            guard fileManager.isExecutableFile(atPath: candidate),
-                  fileManager.fileExists(atPath: candidate, isDirectory: &isDirectory),
-                  !isDirectory.boolValue else { return }
-            candidates.append(candidate)
-        }
-
-        if let pathVariable = ProcessInfo.processInfo.environment["PATH"] {
-            for dir in pathVariable.split(separator: ":") {
-                consider(String(dir))
-            }
-        }
-        for dir in commonBinDirs {
-            consider(dir)
-        }
-        return candidates
-    }
-
     /// Walks the process PATH for an executable named `program`, like exec.LookPath.
     private static func lookPath(_ program: String) -> String? {
         guard let pathVariable = ProcessInfo.processInfo.environment["PATH"] else { return nil }

@@ -62,8 +62,7 @@ struct PeerIP: Equatable {
             return
         }
         if all.count == 16 {
-            let prefix: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff]
-            bytes = Array(all.prefix(12)) == prefix ? Array(all.suffix(4)) : all
+            bytes = Self.collapseMapped(all)
             return
         }
         return nil
@@ -81,18 +80,20 @@ struct PeerIP: Equatable {
 
         var v6 = in6_addr()
         if inet_pton(AF_INET6, address, &v6) == 1 {
-            let all = withUnsafeBytes(of: v6) { Array($0) }
-            // IPv4-mapped (::ffff:0:0/96): last 4 bytes are the real IPv4.
-            let prefix: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff]
-            if all.count == 16, Array(all.prefix(12)) == prefix {
-                bytes = Array(all.suffix(4))
-            } else {
-                bytes = all
-            }
+            bytes = Self.collapseMapped(withUnsafeBytes(of: v6) { Array($0) })
             return
         }
 
         return nil
+    }
+
+    /// Collapses an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`, prefix
+    /// `::ffff:0:0/96`) to its 4-byte IPv4 form; other 16-byte addresses pass
+    /// through unchanged.
+    private static func collapseMapped(_ all: [UInt8]) -> [UInt8] {
+        let prefix: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff]
+        guard all.count == 16, Array(all.prefix(12)) == prefix else { return all }
+        return Array(all.suffix(4))
     }
 }
 

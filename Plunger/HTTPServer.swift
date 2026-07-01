@@ -113,7 +113,7 @@ enum HTTPRequestParser {
 
 /// A minimal HTTP response: status, reason phrase, a content type, a body, and
 /// any extra headers (the 401 challenge uses one).
-struct HTTPResponse {
+struct HTTPResponse: Equatable {
     var status: Int
     var reason: String
     var contentType: String = "application/json"
@@ -154,7 +154,7 @@ struct HTTPResponse {
         status: 401,
         reason: "Unauthorized",
         contentType: "text/html; charset=utf-8",
-        body: "<!doctype html><title>Plunger</title><link rel=\"stylesheet\" href=\"/style.css\"><p>Authentication required.</p>",
+        body: HTMLPage.unauthorized,
         headers: ["WWW-Authenticate": #"Basic realm="Plunger""#]
     )
 }
@@ -174,21 +174,6 @@ private struct LaunchBody: Decodable {
 enum RouteOutcome: Equatable {
     case respond(HTTPResponse)
     case launch(path: String, command: String, success: HTTPResponse)
-
-    static func == (lhs: RouteOutcome, rhs: RouteOutcome) -> Bool {
-        switch (lhs, rhs) {
-        case let (.respond(a), .respond(b)):
-            return same(a, b)
-        case let (.launch(pa, ca, sa), .launch(pb, cb, sb)):
-            return pa == pb && ca == cb && same(sa, sb)
-        default:
-            return false
-        }
-    }
-
-    private static func same(_ a: HTTPResponse, _ b: HTTPResponse) -> Bool {
-        a.status == b.status && a.body == b.body
-    }
 }
 
 /// Pure routing: maps a request plus a read-only store view to an outcome. It
@@ -383,6 +368,11 @@ enum HTMLPage {
     /// Served at GET /style.css.
     static let stylesheet = Template.load("style.css")
 
+    /// Page templates, read from the bundle once at first use rather than per
+    /// request.
+    private static let formTemplate = Template.load("form.html")
+    private static let launchedTemplate = Template.load("launched.html")
+
     /// HTML-escapes text interpolated into markup or an attribute value.
     static func escape(_ text: String) -> String {
         text.replacingOccurrences(of: "&", with: "&amp;")
@@ -398,7 +388,7 @@ enum HTMLPage {
             ? "<p>No saved paths or commands yet — add them from the menu bar.</p>"
             : ""
 
-        return Template.render(Template.load("form.html"), [
+        return Template.render(formTemplate, [
             "note": note,
             "path_options": options(paths.sortedForDisplay(), label: displayPath),
             "command_options": options(commands.sortedForDisplay(), label: { $0 }),
@@ -407,7 +397,7 @@ enum HTMLPage {
 
     /// The success page after a launch.
     static func launched(path: String, command: String) -> String {
-        Template.render(Template.load("launched.html"), [
+        Template.render(launchedTemplate, [
             "command": escape(command),
             "path": escape(displayPath(path)),
         ])
@@ -415,6 +405,9 @@ enum HTMLPage {
 
     /// The page shown when the submitted path or command is no longer saved.
     static let unknown = Template.load("unknown.html")
+
+    /// The body of the 401 challenge, shown before the browser's login prompt.
+    static let unauthorized = Template.load("unauthorized.html")
 
     /// Renders `<option value="…">label</option>` for each value. The value is the
     /// stored string the router validates against; the label is for display.
@@ -430,12 +423,16 @@ enum HTMLPage {
 @MainActor
 @Observable
 final class HTTPServer {
+    /// This host's name, resolved once. The value never changes for the process,
+    /// and `hostName` does a system lookup, so callers on view-render paths reuse
+    /// this rather than resolving per render.
+    private nonisolated static let hostName = ProcessInfo.processInfo.hostName
+
     /// The address for a given port. The listener binds every interface, so a
     /// LAN client reaches it at this host's name; the loopback form still works
     /// locally.
     nonisolated static func url(port: UInt16) -> String {
-        let host = ProcessInfo.processInfo.hostName
-        return "http://\(host):\(port)"
+        "http://\(hostName):\(port)"
     }
 
     /// Whether the listener is bound. `.failed` carries the port that could not
@@ -575,12 +572,17 @@ final class HTTPServer {
                 return
             }
 
-            if let request = HTTPRequestParser.parse(data) {
+            let parsed = HTTPRequestParser.parse(data)
+            if var request = parsed {
                 guard let declared = HTTPRequestParser.contentLength(request.headers) else {
                     HTTPServer.respond(connection, with: .badRequest)
                     return
                 }
                 if request.body.count >= declared {
+                    // Trim any bytes past the declared length (a lying client or a
+                    // pipelined second request) so the JSON/form decoder sees only
+                    // this request's body.
+                    request.body = request.body.prefix(declared)
                     self.dispatch(request, on: connection)
                     return
                 }
@@ -588,7 +590,7 @@ final class HTTPServer {
 
             if isComplete {
                 // Connection closed before a full request arrived.
-                if HTTPRequestParser.parse(data) == nil {
+                if parsed == nil {
                     HTTPServer.respond(connection, with: .badRequest)
                 } else {
                     connection.cancel()

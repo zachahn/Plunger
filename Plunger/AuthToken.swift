@@ -41,7 +41,11 @@ struct AuthToken {
     /// 32 random bytes, base64url-encoded with no padding.
     private static func generate() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            // The random source is unavailable; refuse to hand back the all-zero
+            // buffer, which would be a fixed, guessable token guarding the server.
+            fatalError("Plunger: SecRandomCopyBytes failed to generate a token")
+        }
         return Data(bytes).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")

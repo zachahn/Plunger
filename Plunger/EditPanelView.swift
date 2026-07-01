@@ -116,11 +116,7 @@ private struct HTTPServerColumn: View {
                         .frame(maxWidth: .infinity, alignment: .trailing)
 
                     HStack {
-                        Button("Copy") {
-                            let pasteboard = NSPasteboard.general
-                            pasteboard.clearContents()
-                            pasteboard.setString(store.token, forType: .string)
-                        }
+                        Button("Copy") { store.copyToken() }
                         Button("Regenerate…") { confirmRegenerate = true }
                     }
                 }
