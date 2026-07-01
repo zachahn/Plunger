@@ -6,24 +6,6 @@
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
       buildArchitectures = "Automatic">
-      <PostActions>
-         <ExecutionAction
-            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
-            <ActionContent
-               title = "Bump build number"
-               scriptText = "# Type a script or drag a script file from your workspace to insert its path.&#10;cd &quot;${PROJECT_DIR}&quot; ; agvtool bump&#10;">
-               <EnvironmentBuildable>
-                  <BuildableReference
-                     BuildableIdentifier = "primary"
-                     BlueprintIdentifier = "923ACCE92FF3F21600D2A201"
-                     BuildableName = "Plunger.app"
-                     BlueprintName = "Plunger"
-                     ReferencedContainer = "container:Plunger.xcodeproj">
-                  </BuildableReference>
-               </EnvironmentBuildable>
-            </ActionContent>
-         </ExecutionAction>
-      </PostActions>
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"
