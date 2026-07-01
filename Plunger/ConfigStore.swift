@@ -75,33 +75,6 @@ final class ConfigStore {
 
     // MARK: - Mutations
 
-    /// Records a tuple and folds its path and command into the pick-lists. The
-    /// command's program is resolved to an absolute path here, at create time.
-    func addEntry(_ entry: Entry) {
-        var entry = entry
-        entry.command = CommandResolver.resolveCommand(entry.command)
-        config.entries.append(entry)
-        config.paths.appendUnique(entry.path)
-        config.commands.appendUnique(entry.command)
-        save()
-    }
-
-    func updateEntry(at index: Int, with entry: Entry) {
-        guard config.entries.indices.contains(index) else { return }
-        var entry = entry
-        entry.command = CommandResolver.resolveCommand(entry.command)
-        config.entries[index] = entry
-        config.paths.appendUnique(entry.path)
-        config.commands.appendUnique(entry.command)
-        save()
-    }
-
-    func deleteEntry(at index: Int) {
-        guard config.entries.indices.contains(index) else { return }
-        config.entries.remove(at: index)
-        save()
-    }
-
     func addPath(_ path: String) {
         config.paths.appendUnique(path)
         save()
