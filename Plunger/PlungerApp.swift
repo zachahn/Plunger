@@ -12,16 +12,18 @@ import SwiftUI
 struct PlungerApp: App {
     @State private var store: ConfigStore
     @State private var server: HTTPServer
+    @State private var editPanel: EditPanelController
 
     init() {
         let store = ConfigStore()
         _store = State(initialValue: store)
         _server = State(initialValue: HTTPServer(store: store))
+        _editPanel = State(initialValue: EditPanelController(store: store))
     }
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(store: store)
+            MenuContent(store: store, editPanel: editPanel)
         } label: {
             Image(systemName: "wrench.and.screwdriver")
         }

@@ -12,6 +12,7 @@ import SwiftUI
 
 struct MenuContent: View {
     @Bindable var store: ConfigStore
+    let editPanel: EditPanelController
 
     var body: some View {
         ForEach(store.config.paths, id: \.self) { path in
@@ -24,8 +25,7 @@ struct MenuContent: View {
             Divider()
         }
 
-        Menu("Paths") { PathsMenu(store: store) }
-        Menu("Commands") { CommandsMenu(store: store) }
+        Button("Settings…") { editPanel.show() }
 
         Divider()
 
@@ -64,52 +64,3 @@ private struct CommandLauncher: View {
     }
 }
 
-/// Manages the reusable paths list directly.
-private struct PathsMenu: View {
-    @Bindable var store: ConfigStore
-
-    var body: some View {
-        ForEach(store.config.paths, id: \.self) { path in
-            Menu(displayPath(path)) {
-                Button("Delete") { store.deletePath(path) }
-            }
-        }
-
-        if !store.config.paths.isEmpty {
-            Divider()
-        }
-
-        Button("Add path…") {
-            guard let path = Prompt.directory(
-                title: "Choose a working directory to reuse."
-            ) else { return }
-            store.addPath(path)
-        }
-    }
-}
-
-/// Manages the reusable commands list directly.
-private struct CommandsMenu: View {
-    @Bindable var store: ConfigStore
-
-    var body: some View {
-        ForEach(store.config.commands, id: \.self) { command in
-            Menu(command) {
-                Button("Delete") { store.deleteCommand(command) }
-            }
-        }
-
-        if !store.config.commands.isEmpty {
-            Divider()
-        }
-
-        Button("Add command…") {
-            guard let command = Prompt.command(
-                title: "Add command",
-                info: "A command to reuse.",
-                placeholder: "Command"
-            ) else { return }
-            store.addCommand(command)
-        }
-    }
-}

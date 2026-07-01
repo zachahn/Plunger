@@ -85,6 +85,26 @@ final class ConfigStore {
         save()
     }
 
+    /// Rewrites `path` to `newPath` in place, preserving its position. A no-op
+    /// when `path` isn't saved, `newPath` is blank, or `newPath` is already
+    /// saved under a different entry.
+    func updatePath(_ path: String, to newPath: String) {
+        guard !newPath.isEmpty, newPath == path || !config.paths.contains(newPath) else { return }
+        guard let index = config.paths.firstIndex(of: path) else { return }
+        config.paths[index] = newPath
+        save()
+    }
+
+    /// Rewrites `command` to `newCommand` in place, preserving its position.
+    /// A no-op when `command` isn't saved, `newCommand` is blank, or
+    /// `newCommand` is already saved under a different entry.
+    func updateCommand(_ command: String, to newCommand: String) {
+        guard !newCommand.isEmpty, newCommand == command || !config.commands.contains(newCommand) else { return }
+        guard let index = config.commands.firstIndex(of: command) else { return }
+        config.commands[index] = newCommand
+        save()
+    }
+
     func deletePath(_ path: String) {
         config.paths.removeAll { $0 == path }
         save()
