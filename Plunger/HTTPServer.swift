@@ -237,11 +237,38 @@ enum Router {
     }
 
     /// Accepts either auth style. Both encode (username, password); the username
-    /// must equal `plunger` and the password must equal the live token.
+    /// must equal `plunger` and the password must equal the live token. The token
+    /// check is constant-time so a network attacker can't recover it byte by byte
+    /// from response-timing differences.
     private static func authorized(_ request: HTTPRequest, token: String) -> Bool {
         guard let credentials = request.credentials else { return false }
         guard !credentials.password.isEmpty else { return false }
-        return credentials.username == username && credentials.password == token
+        // Compare both fields unconditionally, then combine, so neither the
+        // username nor the token short-circuits the other. A wrong username must
+        // not skip the token comparison, or response timing would reveal whether
+        // the username alone was correct.
+        let usernameOK = constantTimeEqual(credentials.username, username)
+        let tokenOK = constantTimeEqual(credentials.password, token)
+        return usernameOK && tokenOK
+    }
+
+    /// Compares two strings in time that depends only on the token's length, not
+    /// on where the first differing byte falls, so token comparison leaks nothing
+    /// through timing. A length mismatch folds into the result rather than
+    /// returning early. Empty tokens never match.
+    private static func constantTimeEqual(_ candidate: String, _ token: String) -> Bool {
+        let a = Array(candidate.utf8)
+        let b = Array(token.utf8)
+        guard !b.isEmpty else { return false }
+
+        var diff = a.count ^ b.count
+        for i in 0..<b.count {
+            // Index candidate modulo its length so a shorter candidate doesn't
+            // shorten the loop; the length mismatch already forced diff != 0.
+            let byte = a.isEmpty ? 0 : a[i % a.count]
+            diff |= Int(byte ^ b[i])
+        }
+        return diff == 0
     }
 
     private static func pathsResponse(_ store: Router.StoreView) -> HTTPResponse {
