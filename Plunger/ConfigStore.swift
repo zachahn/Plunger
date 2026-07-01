@@ -129,4 +129,13 @@ final class ConfigStore {
         config.allowedPeers = peers
         save()
     }
+
+    /// Sets whether the HTTP server requires the bearer token. Takes effect on
+    /// the next connection; no restart needed, since the server reads it per
+    /// request.
+    func setAuthEnabled(_ enabled: Bool) {
+        guard enabled != config.authEnabled else { return }
+        config.authEnabled = enabled
+        save()
+    }
 }

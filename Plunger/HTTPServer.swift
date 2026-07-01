@@ -197,6 +197,7 @@ enum Router {
     /// A read-only view of the store, captured on the main actor before routing.
     struct StoreView {
         var token: String
+        var authEnabled: Bool
         var paths: [String]
         var commands: [String]
         var hasPath: (String) -> Bool
@@ -209,7 +210,7 @@ enum Router {
     static func route(_ request: HTTPRequest, store: StoreView) -> RouteOutcome {
         switch (request.method, request.target) {
         case ("GET", "/"):
-            guard authorized(request, token: store.token) else { return .respond(.unauthorized) }
+            guard authorized(request, store: store) else { return .respond(.unauthorized) }
             return .respond(.html(HTMLPage.form(paths: store.paths, commands: store.commands)))
 
         case ("GET", "/style.css"):
@@ -219,7 +220,7 @@ enum Router {
             return .respond(.ok)
 
         case ("GET", "/paths"):
-            guard authorized(request, token: store.token) else { return .respond(.forbidden) }
+            guard authorized(request, store: store) else { return .respond(.forbidden) }
             return .respond(pathsResponse(store))
 
         case ("POST", "/launch"):
@@ -239,8 +240,10 @@ enum Router {
     /// Accepts either auth style. Both encode (username, password); the username
     /// must equal `plunger` and the password must equal the live token. The token
     /// check is constant-time so a network attacker can't recover it byte by byte
-    /// from response-timing differences.
-    private static func authorized(_ request: HTTPRequest, token: String) -> Bool {
+    /// from response-timing differences. When auth is turned off, every request
+    /// passes without checking credentials.
+    private static func authorized(_ request: HTTPRequest, store: Router.StoreView) -> Bool {
+        guard store.authEnabled else { return true }
         guard let credentials = request.credentials else { return false }
         guard !credentials.password.isEmpty else { return false }
         // Compare both fields unconditionally, then combine, so neither the
@@ -248,7 +251,7 @@ enum Router {
         // not skip the token comparison, or response timing would reveal whether
         // the username alone was correct.
         let usernameOK = constantTimeEqual(credentials.username, username)
-        let tokenOK = constantTimeEqual(credentials.password, token)
+        let tokenOK = constantTimeEqual(credentials.password, store.token)
         return usernameOK && tokenOK
     }
 
@@ -289,7 +292,7 @@ enum Router {
         let isForm = (request.headers["content-type"] ?? "")
             .hasPrefix("application/x-www-form-urlencoded")
 
-        guard authorized(request, token: store.token) else {
+        guard authorized(request, store: store) else {
             return .respond(isForm ? .unauthorized : .forbidden)
         }
 
@@ -461,6 +464,7 @@ final class HTTPServer {
         self.snapshot = {
             Router.StoreView(
                 token: store.token,
+                authEnabled: store.config.authEnabled,
                 paths: store.config.paths,
                 commands: store.config.commands,
                 hasPath: { store.hasPath($0) },

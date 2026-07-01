@@ -101,10 +101,12 @@ struct RouterTests {
 
     private func storeView(
         paths: [String] = ["/work"],
-        commands: [String] = ["/bin/zsh"]
+        commands: [String] = ["/bin/zsh"],
+        authEnabled: Bool = true
     ) -> Router.StoreView {
         Router.StoreView(
             token: token,
+            authEnabled: authEnabled,
             paths: paths,
             commands: commands,
             hasPath: { paths.contains($0) },
@@ -179,6 +181,30 @@ struct RouterTests {
         #expect(response.status == 200)
         #expect(response.body.contains("\"/a\""))
         #expect(response.body.contains("\"/b\""))
+    }
+
+    @Test func pathsWithoutTokenSucceedsWhenAuthDisabled() {
+        let outcome = Router.route(
+            request(method: "GET", target: "/paths"),
+            store: storeView(paths: ["/a"], commands: ["/b"], authEnabled: false)
+        )
+        guard case let .respond(response) = outcome else {
+            Issue.record("expected a response outcome")
+            return
+        }
+        #expect(response.status == 200)
+    }
+
+    @Test func rootWithoutTokenServesFormWhenAuthDisabled() {
+        let outcome = Router.route(
+            request(method: "GET", target: "/"),
+            store: storeView(paths: ["/a"], commands: ["/b"], authEnabled: false)
+        )
+        guard case let .respond(response) = outcome else {
+            Issue.record("expected a response outcome")
+            return
+        }
+        #expect(response.status == 200)
     }
 
     @Test func launchWithoutTokenIsForbidden() {

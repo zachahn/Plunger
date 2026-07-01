@@ -94,6 +94,19 @@ private struct HTTPServerColumn: View {
                 .foregroundStyle(.red)
                 .font(.callout)
             }
+            Toggle("Require token", isOn: Binding(
+                get: { store.config.authEnabled },
+                set: { store.setAuthEnabled($0) }
+            ))
+            if !store.config.authEnabled {
+                Label(
+                    "Anyone who can reach this port can launch commands without the token.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .foregroundStyle(.orange)
+                .font(.callout)
+            }
+
             LabeledContent("Token") {
                 VStack(alignment: .trailing, spacing: 8) {
                     Text(store.token)

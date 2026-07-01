@@ -35,20 +35,26 @@ struct Config: Codable {
     /// Decodes to `defaultAllowedPeers` for older configs that predate the field.
     var allowedPeers: Set<PeerCategory> = defaultAllowedPeers
 
+    /// Whether the HTTP server requires the bearer token. Decodes to `true` for
+    /// older configs that predate the field, preserving prior behavior.
+    var authEnabled: Bool = true
+
     enum CodingKeys: String, CodingKey {
-        case paths, commands, port, allowedPeers
+        case paths, commands, port, allowedPeers, authEnabled
     }
 
     init(
         paths: [String] = [],
         commands: [String] = [],
         port: UInt16 = defaultPort,
-        allowedPeers: Set<PeerCategory> = defaultAllowedPeers
+        allowedPeers: Set<PeerCategory> = defaultAllowedPeers,
+        authEnabled: Bool = true
     ) {
         self.paths = paths
         self.commands = commands
         self.port = port
         self.allowedPeers = allowedPeers
+        self.authEnabled = authEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -58,6 +64,7 @@ struct Config: Codable {
         port = try container.decodeIfPresent(UInt16.self, forKey: .port) ?? Self.defaultPort
         allowedPeers = try container.decodeIfPresent(Set<PeerCategory>.self, forKey: .allowedPeers)
             ?? Self.defaultAllowedPeers
+        authEnabled = try container.decodeIfPresent(Bool.self, forKey: .authEnabled) ?? true
     }
 }
 
