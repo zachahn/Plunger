@@ -183,6 +183,20 @@ struct RouterTests {
         #expect(response.body.contains("\"/b\""))
     }
 
+    @Test func pathsResponseIsSortedForDisplay() throws {
+        let outcome = Router.route(
+            request(method: "GET", target: "/paths", token: token),
+            store: storeView(paths: ["banana", "Apple"], commands: ["zsh", "Bash"])
+        )
+        guard case let .respond(response) = outcome else {
+            Issue.record("expected a response outcome")
+            return
+        }
+        let pathsIndex = try #require(response.body.range(of: "\"Apple\""))
+        let bananaIndex = try #require(response.body.range(of: "\"banana\""))
+        #expect(pathsIndex.lowerBound < bananaIndex.lowerBound)
+    }
+
     @Test func pathsWithoutTokenSucceedsWhenAuthDisabled() {
         let outcome = Router.route(
             request(method: "GET", target: "/paths"),
@@ -358,6 +372,20 @@ struct RouterTests {
         }
         #expect(response.status == 404)
         #expect(response.contentType.hasPrefix("text/html"))
+    }
+}
+
+// MARK: - Display sorting
+
+struct SortedForDisplayTests {
+    @Test func sortsCaseInsensitively() {
+        #expect(["banana", "Apple", "cherry"].sortedForDisplay() == ["Apple", "banana", "cherry"])
+    }
+
+    @Test func leavesStoredOrderUntouched() {
+        var values = ["banana", "Apple"]
+        _ = values.sortedForDisplay()
+        #expect(values == ["banana", "Apple"])
     }
 }
 

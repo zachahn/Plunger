@@ -25,11 +25,9 @@ private struct Row: Identifiable, Hashable {
 }
 
 private extension Array where Element == String {
-    /// Wraps each string as a Row, sorted case-insensitively for display. The
-    /// stored order in ConfigStore is left untouched; this is presentation only.
-    func sortedForDisplay() -> [Row] {
-        sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-            .map { Row(value: $0) }
+    /// Wraps each string (already sorted via `sortedForDisplay()`) as a Row.
+    func asRows() -> [Row] {
+        map { Row(value: $0) }
     }
 }
 
@@ -260,7 +258,7 @@ private struct PathsColumn: View {
                         .truncationMode(.head)
                 }
             } rows: {
-                ForEach(store.config.paths.sortedForDisplay()) { row in
+                ForEach(store.config.paths.sortedForDisplay().asRows()) { row in
                     TableRow(row)
                 }
             }
@@ -380,7 +378,7 @@ private struct CommandsColumn: View {
                         .truncationMode(.tail)
                 }
             } rows: {
-                ForEach(store.config.commands.sortedForDisplay()) { row in
+                ForEach(store.config.commands.sortedForDisplay().asRows()) { row in
                     TableRow(row)
                 }
             }

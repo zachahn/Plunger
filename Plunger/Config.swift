@@ -75,4 +75,12 @@ extension Array where Element == String {
         guard !value.isEmpty, !contains(value) else { return }
         append(value)
     }
+
+    /// Sorts case-insensitively for display. The stored order in ConfigStore
+    /// (insertion order) is left untouched; this is presentation only, and is
+    /// the one place every UI (menu bar, settings panel, web form) sorts
+    /// paths and commands, so they stay consistent.
+    func sortedForDisplay() -> [String] {
+        sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
 }

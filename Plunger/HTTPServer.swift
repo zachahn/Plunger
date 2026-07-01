@@ -275,7 +275,7 @@ enum Router {
     }
 
     private static func pathsResponse(_ store: Router.StoreView) -> HTTPResponse {
-        let payload = ["paths": store.paths, "commands": store.commands]
+        let payload = ["paths": store.paths.sortedForDisplay(), "commands": store.commands.sortedForDisplay()]
         let encoder = JSONEncoder()
         encoder.outputFormatting = .withoutEscapingSlashes
         guard let data = try? encoder.encode(payload),
@@ -400,8 +400,8 @@ enum HTMLPage {
 
         return Template.render(Template.load("form.html"), [
             "note": note,
-            "path_options": options(paths, label: displayPath),
-            "command_options": options(commands, label: { $0 }),
+            "path_options": options(paths.sortedForDisplay(), label: displayPath),
+            "command_options": options(commands.sortedForDisplay(), label: { $0 }),
         ])
     }
 

@@ -15,7 +15,7 @@ struct MenuContent: View {
     let editPanel: EditPanelController
 
     var body: some View {
-        ForEach(store.config.paths, id: \.self) { path in
+        ForEach(store.config.paths.sortedForDisplay(), id: \.self) { path in
             Menu(displayPath(path)) {
                 CommandLauncher(store: store, path: path)
             }
@@ -55,7 +55,7 @@ private struct CommandLauncher: View {
         if store.config.commands.isEmpty {
             Text("(no saved commands)")
         } else {
-            ForEach(store.config.commands, id: \.self) { command in
+            ForEach(store.config.commands.sortedForDisplay(), id: \.self) { command in
                 Button(command) {
                     Launcher.launch(path: path, command: command)
                 }
