@@ -134,10 +134,8 @@ private struct PathsMenu: View {
         }
 
         Button("Add path…") {
-            guard let path = Prompt.string(
-                title: "Add path",
-                info: "A working directory to reuse.",
-                placeholder: "Path"
+            guard let path = Prompt.directory(
+                title: "Choose a working directory to reuse."
             ) else { return }
             store.addPath(path)
         }

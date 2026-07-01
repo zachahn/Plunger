@@ -30,6 +30,21 @@ enum Prompt {
         return value.isEmpty ? nil : value
     }
 
+    /// Shows the OS directory picker and returns the chosen directory's path.
+    /// Returns nil when the user cancels.
+    @MainActor
+    static func directory(title: String) -> String? {
+        let panel = NSOpenPanel()
+        panel.message = title
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return url.path
+    }
+
     /// Shows a two-field dialog. A blank field keeps the prefilled value, so Edit
     /// can change one field at a time. Returns nil on cancel.
     @MainActor
