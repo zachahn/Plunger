@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Plunger</title>
+        <link>https://raw.githubusercontent.com/zachahn/Plunger/main/appcast.xml</link>
+        <description>Updates for Plunger, the Ghostty menu-bar launcher.</description>
+        <language>en</language>
+    </channel>
+</rss>

@@ -8,11 +8,13 @@
 //
 
 import AppKit
+import Sparkle
 import SwiftUI
 
 struct MenuContent: View {
     @Bindable var store: ConfigStore
     let editPanel: EditPanelController
+    let updater: SPUUpdater
 
     var body: some View {
         ForEach(store.config.paths.sortedForDisplay(), id: \.self) { path in
@@ -27,6 +29,8 @@ struct MenuContent: View {
 
         Button("Settings…") { editPanel.show() }
 
+        CheckForUpdatesButton(updater: updater)
+
         Divider()
 
         Section("HTTP server") {
@@ -39,6 +43,20 @@ struct MenuContent: View {
 
         Button("Quit Plunger") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
+    }
+}
+
+/// A "Check for Updates…" button that tracks Sparkle's `canCheckForUpdates`,
+/// so it dims while a check is already running or the updater is unavailable.
+private struct CheckForUpdatesButton: View {
+    let updater: SPUUpdater
+
+    @State private var canCheck = false
+
+    var body: some View {
+        Button("Check for Updates…") { updater.checkForUpdates() }
+            .disabled(!canCheck)
+            .onReceive(updater.publisher(for: \.canCheckForUpdates)) { canCheck = $0 }
     }
 }
 

@@ -6,6 +6,7 @@
 //  (path, command) tuples. Ported from the Go menuet app.
 //
 
+import Sparkle
 import SwiftUI
 
 @main
@@ -13,6 +14,15 @@ struct PlungerApp: App {
     @State private var store: ConfigStore
     @State private var server: HTTPServer
     @State private var editPanel: EditPanelController
+
+    /// Owns the Sparkle update lifecycle. `startingUpdater: true` lets Sparkle
+    /// run its default background check schedule; the menu's "Check for
+    /// Updates…" item drives manual checks through the same controller.
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
 
     init() {
         let store = ConfigStore()
@@ -24,7 +34,7 @@ struct PlungerApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(store: store, editPanel: editPanel)
+            MenuContent(store: store, editPanel: editPanel, updater: updaterController.updater)
         } label: {
             Image("MenuBarIcon")
         }
