@@ -79,7 +79,7 @@ final class EditPanelController {
     }
 
     private func makePanel() -> FloatingPanel {
-        let panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 480, height: 360))
+        let panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 440))
         panel.contentView = NSHostingView(rootView: EditPanelView(store: store))
         return panel
     }
