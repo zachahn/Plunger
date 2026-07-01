@@ -49,7 +49,7 @@ enum Prompt {
         resolveButton.bezelStyle = .rounded
         let resolveAction = ResolveAction(field: field)
         resolveButton.target = resolveAction
-        resolveButton.action = #selector(ResolveAction.resolve)
+        resolveButton.action = #selector(ResolveAction.resolve(_:))
 
         let stack = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
         stack.addSubview(field)
@@ -71,12 +71,39 @@ enum Prompt {
     }
 
     /// Target/action holder for the Resolve button; NSButton needs an Objective-C
-    /// target, which a struct's method can't be.
+    /// target, which a struct's method can't be. When the typed program matches
+    /// more than one executable, a popup menu lets the user pick which one;
+    /// otherwise it rewrites the field in place same as before.
     private final class ResolveAction: NSObject {
         let field: NSTextField
         init(field: NSTextField) { self.field = field }
-        @objc func resolve() {
-            field.stringValue = CommandResolver.resolveCommand(field.stringValue)
+
+        @objc func resolve(_ sender: NSButton) {
+            let trimmed = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+
+            let spaceIndex = trimmed.firstIndex(of: " ")
+            let program = spaceIndex.map { String(trimmed[..<$0]) } ?? trimmed
+            let rest = spaceIndex.map { String(trimmed[trimmed.index(after: $0)...]) }
+
+            let candidates = CommandResolver.resolveProgramCandidates(program)
+            guard candidates.count > 1 else {
+                field.stringValue = CommandResolver.resolveCommand(trimmed)
+                return
+            }
+
+            let menu = NSMenu()
+            for candidate in candidates {
+                let item = menu.addItem(withTitle: candidate, action: #selector(choose(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = rest
+            }
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.frame.height), in: sender)
+        }
+
+        @objc private func choose(_ sender: NSMenuItem) {
+            let rest = sender.representedObject as? String
+            field.stringValue = rest.map { sender.title + " " + $0 } ?? sender.title
         }
     }
 
