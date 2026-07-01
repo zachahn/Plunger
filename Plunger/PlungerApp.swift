@@ -2,16 +2,21 @@
 //  PlungerApp.swift
 //  Plunger
 //
-//  Created by Zach Ahn on 6/30/26.
+//  A menu-bar app that launches Ghostty terminal tabs from saved
+//  (path, command) tuples. Ported from the Go menuet app.
 //
 
 import SwiftUI
 
 @main
 struct PlungerApp: App {
+    @State private var store = ConfigStore()
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        MenuBarExtra {
+            MenuContent(store: store)
+        } label: {
+            Image(systemName: "wrench.and.screwdriver")
         }
     }
 }
