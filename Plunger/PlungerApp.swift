@@ -26,7 +26,7 @@ struct PlungerApp: App {
         MenuBarExtra {
             MenuContent(store: store, editPanel: editPanel)
         } label: {
-            Image(systemName: "wrench.and.screwdriver")
+            Image("MenuBarIcon")
         }
         .onChange(of: scenePhaseStarted, initial: true) { _, _ in
             server.start()
