@@ -10,10 +10,15 @@
 //  The app runs without the App Sandbox, so binding the socket needs no
 //  entitlement.
 //
+//  Auth is HTTP Basic with the fixed username "plunger" and the generated token
+//  as the password, so a browser prompts once and caches it. The bearer path is
+//  kept for API clients but now carries the username too, as "plunger:<token>".
+//
 //  Routes (one request per connection, no keep-alive):
-//    GET  /health  -> 200 {"ok":true}                       (no auth)
-//    GET  /paths   -> 200 {"paths":[...],"commands":[...]}   (auth)
-//    POST /launch  -> 200 {"launched":true}                  (auth)
+//    GET  /        -> 200 text/html (the launch form)        (auth, 401 challenge)
+//    GET  /health  -> 200 {"ok":true}                        (no auth)
+//    GET  /paths   -> 200 {"paths":[...],"commands":[...]}    (auth, 403)
+//    POST /launch  -> launches; JSON or form-encoded body     (auth)
 //
 
 import Foundation
@@ -28,12 +33,32 @@ struct HTTPRequest: Equatable {
     var headers: [String: String]
     var body: Data
 
-    /// The bearer token from the Authorization header, if present.
-    var bearerToken: String? {
+    /// A username/password pair carried by the Authorization header. Both auth
+    /// styles encode the same pair: Basic as base64(user:pass), Bearer as the
+    /// plaintext "user:token". Returns nil when no usable credentials are present.
+    var credentials: (username: String, password: String)? {
         guard let value = headers["authorization"] else { return nil }
-        let prefix = "Bearer "
-        guard value.hasPrefix(prefix) else { return nil }
-        return String(value.dropFirst(prefix.count))
+
+        if value.hasPrefix("Basic ") {
+            let encoded = String(value.dropFirst("Basic ".count))
+            guard let data = Data(base64Encoded: encoded),
+                  let decoded = String(data: data, encoding: .utf8) else { return nil }
+            return Self.split(decoded)
+        }
+
+        if value.hasPrefix("Bearer ") {
+            return Self.split(String(value.dropFirst("Bearer ".count)))
+        }
+
+        return nil
+    }
+
+    /// Splits "username:password" on the first colon. Returns nil without a colon.
+    private static func split(_ pair: String) -> (username: String, password: String)? {
+        guard let colon = pair.firstIndex(of: ":") else { return nil }
+        let username = String(pair[..<colon])
+        let password = String(pair[pair.index(after: colon)...])
+        return (username, password)
     }
 }
 
@@ -81,31 +106,47 @@ enum HTTPRequestParser {
 
 // MARK: - Responses
 
-/// A minimal HTTP response: status, reason phrase, and a JSON body.
+/// A minimal HTTP response: status, reason phrase, a content type, a body, and
+/// any extra headers (the 401 challenge uses one).
 struct HTTPResponse {
     var status: Int
     var reason: String
-    var json: String
+    var contentType: String = "application/json"
+    var body: String
+    var headers: [String: String] = [:]
 
     func serialized() -> Data {
-        let body = Data(json.utf8)
-        let head = """
-        HTTP/1.1 \(status) \(reason)\r
-        Content-Type: application/json\r
-        Content-Length: \(body.count)\r
-        Connection: close\r
-        \r
-
-        """
-        return Data(head.utf8) + body
+        let bodyData = Data(body.utf8)
+        var head = "HTTP/1.1 \(status) \(reason)\r\n"
+        head += "Content-Type: \(contentType)\r\n"
+        head += "Content-Length: \(bodyData.count)\r\n"
+        for (name, value) in headers {
+            head += "\(name): \(value)\r\n"
+        }
+        head += "Connection: close\r\n\r\n"
+        return Data(head.utf8) + bodyData
     }
 
-    static let ok = HTTPResponse(status: 200, reason: "OK", json: #"{"ok":true}"#)
-    static let launched = HTTPResponse(status: 200, reason: "OK", json: #"{"launched":true}"#)
-    static let badRequest = HTTPResponse(status: 400, reason: "Bad Request", json: #"{"error":"bad request"}"#)
-    static let forbidden = HTTPResponse(status: 403, reason: "Forbidden", json: #"{"error":"forbidden"}"#)
-    static let notFound = HTTPResponse(status: 404, reason: "Not Found", json: #"{"error":"not found"}"#)
-    static let methodNotAllowed = HTTPResponse(status: 405, reason: "Method Not Allowed", json: #"{"error":"method not allowed"}"#)
+    /// An HTML response. Defaults to 200 OK.
+    static func html(_ markup: String, status: Int = 200, reason: String = "OK") -> HTTPResponse {
+        HTTPResponse(status: status, reason: reason, contentType: "text/html; charset=utf-8", body: markup)
+    }
+
+    static let ok = HTTPResponse(status: 200, reason: "OK", body: #"{"ok":true}"#)
+    static let launched = HTTPResponse(status: 200, reason: "OK", body: #"{"launched":true}"#)
+    static let badRequest = HTTPResponse(status: 400, reason: "Bad Request", body: #"{"error":"bad request"}"#)
+    static let forbidden = HTTPResponse(status: 403, reason: "Forbidden", body: #"{"error":"forbidden"}"#)
+    static let notFound = HTTPResponse(status: 404, reason: "Not Found", body: #"{"error":"not found"}"#)
+    static let methodNotAllowed = HTTPResponse(status: 405, reason: "Method Not Allowed", body: #"{"error":"method not allowed"}"#)
+
+    /// A 401 that makes the browser show its Basic-auth login prompt.
+    static let unauthorized = HTTPResponse(
+        status: 401,
+        reason: "Unauthorized",
+        contentType: "text/html; charset=utf-8",
+        body: "<!doctype html><title>Plunger</title><p>Authentication required.</p>",
+        headers: ["WWW-Authenticate": #"Basic realm="Plunger""#]
+    )
 }
 
 // MARK: - Routing
@@ -117,20 +158,26 @@ private struct LaunchBody: Decodable {
 }
 
 /// What the router decided a valid /launch request should do. The router stops
-/// here so its decisions are testable without spawning Ghostty.
+/// here so its decisions are testable without spawning Ghostty. `launch` carries
+/// the success response to send afterward, so a form submit gets HTML and a JSON
+/// client gets JSON.
 enum RouteOutcome: Equatable {
     case respond(HTTPResponse)
-    case launch(Entry)
+    case launch(Entry, success: HTTPResponse)
 
     static func == (lhs: RouteOutcome, rhs: RouteOutcome) -> Bool {
         switch (lhs, rhs) {
         case let (.respond(a), .respond(b)):
-            return a.status == b.status && a.json == b.json
-        case let (.launch(a), .launch(b)):
-            return a == b
+            return same(a, b)
+        case let (.launch(a, sa), .launch(b, sb)):
+            return a == b && same(sa, sb)
         default:
             return false
         }
+    }
+
+    private static func same(_ a: HTTPResponse, _ b: HTTPResponse) -> Bool {
+        a.status == b.status && a.body == b.body
     }
 }
 
@@ -146,8 +193,15 @@ enum Router {
         var hasCommand: (String) -> Bool
     }
 
+    /// The fixed username both auth styles must carry.
+    static let username = "plunger"
+
     static func route(_ request: HTTPRequest, store: StoreView) -> RouteOutcome {
         switch (request.method, request.target) {
+        case ("GET", "/"):
+            guard authorized(request, token: store.token) else { return .respond(.unauthorized) }
+            return .respond(.html(HTMLPage.form(paths: store.paths, commands: store.commands)))
+
         case ("GET", "/health"):
             return .respond(.ok)
 
@@ -156,8 +210,10 @@ enum Router {
             return .respond(pathsResponse(store))
 
         case ("POST", "/launch"):
-            guard authorized(request, token: store.token) else { return .respond(.forbidden) }
             return launch(request, store: store)
+
+        case (_, "/"):
+            return .respond(.methodNotAllowed)
 
         case (_, "/health"), (_, "/paths"), (_, "/launch"):
             return .respond(.methodNotAllowed)
@@ -167,9 +223,12 @@ enum Router {
         }
     }
 
+    /// Accepts either auth style. Both encode (username, password); the username
+    /// must equal `plunger` and the password must equal the live token.
     private static func authorized(_ request: HTTPRequest, token: String) -> Bool {
-        guard let presented = request.bearerToken, !presented.isEmpty else { return false }
-        return presented == token
+        guard let credentials = request.credentials else { return false }
+        guard !credentials.password.isEmpty else { return false }
+        return credentials.username == username && credentials.password == token
     }
 
     private static func pathsResponse(_ store: Router.StoreView) -> HTTPResponse {
@@ -178,19 +237,144 @@ enum Router {
         encoder.outputFormatting = .withoutEscapingSlashes
         guard let data = try? encoder.encode(payload),
               let json = String(data: data, encoding: .utf8) else {
-            return HTTPResponse(status: 500, reason: "Internal Server Error", json: #"{"error":"encode failed"}"#)
+            return HTTPResponse(status: 500, reason: "Internal Server Error", body: #"{"error":"encode failed"}"#)
         }
-        return HTTPResponse(status: 200, reason: "OK", json: json)
+        return HTTPResponse(status: 200, reason: "OK", body: json)
     }
 
+    /// Decodes a launch from JSON or a form-encoded body. A form submit comes from
+    /// the HTML page, so it gets a 401 challenge when unauthorized and an HTML
+    /// result on success; a JSON client gets 403 and JSON.
     private static func launch(_ request: HTTPRequest, store: Router.StoreView) -> RouteOutcome {
-        guard let body = try? JSONDecoder().decode(LaunchBody.self, from: request.body) else {
+        let isForm = (request.headers["content-type"] ?? "")
+            .hasPrefix("application/x-www-form-urlencoded")
+
+        guard authorized(request, token: store.token) else {
+            return .respond(isForm ? .unauthorized : .forbidden)
+        }
+
+        guard let parsed = entry(from: request, isForm: isForm) else {
             return .respond(.badRequest)
         }
-        guard store.hasPath(body.path), store.hasCommand(body.command) else {
-            return .respond(.notFound)
+        guard store.hasPath(parsed.path), store.hasCommand(parsed.command) else {
+            return .respond(isForm ? .html(HTMLPage.unknown, status: 404, reason: "Not Found") : .notFound)
         }
-        return .launch(Entry(path: body.path, command: body.command))
+
+        let success = isForm
+            ? HTTPResponse.html(HTMLPage.launched(parsed))
+            : HTTPResponse.launched
+        return .launch(parsed, success: success)
+    }
+
+    /// Reads (path, command) from the body in whichever encoding the request used.
+    private static func entry(from request: HTTPRequest, isForm: Bool) -> Entry? {
+        if isForm {
+            let fields = FormDecoder.decode(request.body)
+            guard let path = fields["path"], let command = fields["command"] else { return nil }
+            return Entry(path: path, command: command)
+        }
+        guard let body = try? JSONDecoder().decode(LaunchBody.self, from: request.body) else {
+            return nil
+        }
+        return Entry(path: body.path, command: body.command)
+    }
+}
+
+// MARK: - Form decoding
+
+/// Decodes an `application/x-www-form-urlencoded` body into fields. Splits on `&`
+/// then `=`, replaces `+` with space, and percent-decodes each side.
+enum FormDecoder {
+    static func decode(_ body: Data) -> [String: String] {
+        guard let raw = String(data: body, encoding: .utf8) else { return [:] }
+        var fields: [String: String] = [:]
+        for pair in raw.split(separator: "&", omittingEmptySubsequences: true) {
+            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            let name = unescape(String(parts[0]))
+            let value = parts.count > 1 ? unescape(String(parts[1])) : ""
+            guard !name.isEmpty else { continue }
+            fields[name] = value
+        }
+        return fields
+    }
+
+    private static func unescape(_ component: String) -> String {
+        let spaced = component.replacingOccurrences(of: "+", with: " ")
+        return spaced.removingPercentEncoding ?? spaced
+    }
+}
+
+// MARK: - HTML
+
+/// Builds the bare-bones pages the browser sees: the launch form and the result
+/// of a launch. No CSS, no JavaScript, no external assets.
+enum HTMLPage {
+    /// HTML-escapes text interpolated into markup or an attribute value.
+    static func escape(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    /// The launch form: two dropdowns posting to /launch. An empty list renders an
+    /// empty select plus a note pointing to the menu bar.
+    static func form(paths: [String], commands: [String]) -> String {
+        let pathOptions = options(paths, label: displayPath)
+        let commandOptions = options(commands, label: { $0 })
+        let note = (paths.isEmpty || commands.isEmpty)
+            ? "<p>No saved paths or commands yet — add them from the menu bar.</p>"
+            : ""
+
+        return """
+        <!doctype html>
+        <html>
+        <head><meta charset="utf-8"><title>Plunger</title></head>
+        <body>
+        <h1>Plunger</h1>
+        \(note)
+        <form method="post" action="/launch">
+        <p><label>Path <select name="path">\(pathOptions)</select></label></p>
+        <p><label>Command <select name="command">\(commandOptions)</select></label></p>
+        <p><button type="submit">Launch</button></p>
+        </form>
+        </body>
+        </html>
+        """
+    }
+
+    /// The success page after a launch.
+    static func launched(_ entry: Entry) -> String {
+        """
+        <!doctype html>
+        <html>
+        <head><meta charset="utf-8"><title>Plunger</title></head>
+        <body>
+        <p>Launched <code>\(escape(entry.command))</code> in <code>\(escape(displayPath(entry.path)))</code>.</p>
+        <p><a href="/">Launch another</a></p>
+        </body>
+        </html>
+        """
+    }
+
+    /// The page shown when the submitted path or command is no longer saved.
+    static let unknown = """
+        <!doctype html>
+        <html>
+        <head><meta charset="utf-8"><title>Plunger</title></head>
+        <body>
+        <p>That path or command is no longer saved.</p>
+        <p><a href="/">Back</a></p>
+        </body>
+        </html>
+        """
+
+    /// Renders `<option value="…">label</option>` for each value. The value is the
+    /// stored string the router validates against; the label is for display.
+    private static func options(_ values: [String], label: @escaping (String) -> String) -> String {
+        values.map { value in
+            "<option value=\"\(escape(value))\">\(escape(label(value)))</option>"
+        }.joined()
     }
 }
 
@@ -296,9 +480,9 @@ final class HTTPServer: @unchecked Sendable {
             switch Router.route(request, store: view) {
             case let .respond(response):
                 HTTPServer.respond(connection, with: response)
-            case let .launch(entry):
+            case let .launch(entry, success):
                 Launcher.launch(entry)
-                HTTPServer.respond(connection, with: .launched)
+                HTTPServer.respond(connection, with: success)
             }
         }
     }

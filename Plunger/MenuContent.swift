@@ -31,6 +31,7 @@ struct MenuContent: View {
 
         Section("HTTP server") {
             Text(HTTPServer.url)
+            Text("User: \(Router.username)")
             Button("Copy token") {
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()
