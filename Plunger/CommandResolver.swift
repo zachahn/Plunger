@@ -59,6 +59,16 @@ enum CommandResolver {
         return resolveProgram(trimmed)
     }
 
+    /// Reports whether `command`'s first token names an existing executable file,
+    /// either as a literal path or by resolving it like `resolveProgram` would.
+    static func programExists(_ command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let program = trimmed.firstIndex(of: " ").map { String(trimmed[..<$0]) } ?? trimmed
+        let resolved = resolveProgram(program)
+        return FileManager.default.isExecutableFile(atPath: resolved)
+    }
+
     /// Walks the process PATH for an executable named `program`, like exec.LookPath.
     private static func lookPath(_ program: String) -> String? {
         guard let pathVariable = ProcessInfo.processInfo.environment["PATH"] else { return nil }

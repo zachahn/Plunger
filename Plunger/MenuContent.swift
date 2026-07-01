@@ -158,7 +158,7 @@ private struct CommandsMenu: View {
         }
 
         Button("Add command…") {
-            guard let command = Prompt.string(
+            guard let command = Prompt.command(
                 title: "Add command",
                 info: "A command to reuse.",
                 placeholder: "Command"

@@ -30,6 +30,56 @@ enum Prompt {
         return value.isEmpty ? nil : value
     }
 
+    /// Shows a one-field dialog for a shell command, with a "Resolve" button that
+    /// rewrites the field's program to its absolute path in place. Blocks saving
+    /// until the typed command's program exists on disk. Returns nil on cancel.
+    @MainActor
+    static func command(title: String, info: String, placeholder: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = info
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        field.placeholderString = placeholder
+
+        let resolveButton = NSButton(frame: NSRect(x: 208, y: 0, width: 72, height: 24))
+        resolveButton.title = "Resolve"
+        resolveButton.bezelStyle = .rounded
+        let resolveAction = ResolveAction(field: field)
+        resolveButton.target = resolveAction
+        resolveButton.action = #selector(ResolveAction.resolve)
+
+        let stack = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        stack.addSubview(field)
+        stack.addSubview(resolveButton)
+        alert.accessoryView = stack
+        alert.window.initialFirstResponder = field
+
+        while true {
+            guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+            let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty { return nil }
+            if CommandResolver.programExists(value) { return value }
+            let invalid = NSAlert()
+            invalid.messageText = "Command not found"
+            invalid.informativeText = "\"\(value)\" doesn't resolve to an existing executable."
+            invalid.addButton(withTitle: "OK")
+            invalid.runModal()
+        }
+    }
+
+    /// Target/action holder for the Resolve button; NSButton needs an Objective-C
+    /// target, which a struct's method can't be.
+    private final class ResolveAction: NSObject {
+        let field: NSTextField
+        init(field: NSTextField) { self.field = field }
+        @objc func resolve() {
+            field.stringValue = CommandResolver.resolveCommand(field.stringValue)
+        }
+    }
+
     /// Shows the OS directory picker and returns the chosen directory's path.
     /// Returns nil when the user cancels.
     @MainActor
