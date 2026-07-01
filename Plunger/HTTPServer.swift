@@ -15,10 +15,11 @@
 //  kept for API clients but now carries the username too, as "plunger:<token>".
 //
 //  Routes (one request per connection, no keep-alive):
-//    GET  /        -> 200 text/html (the launch form)        (auth, 401 challenge)
-//    GET  /health  -> 200 {"ok":true}                        (no auth)
-//    GET  /paths   -> 200 {"paths":[...],"commands":[...]}    (auth, 403)
-//    POST /launch  -> launches; JSON or form-encoded body     (auth)
+//    GET  /          -> 200 text/html (the launch form)       (auth, 401 challenge)
+//    GET  /style.css -> 200 text/css                          (no auth)
+//    GET  /health    -> 200 {"ok":true}                       (no auth)
+//    GET  /paths     -> 200 {"paths":[...],"commands":[...]}   (auth, 403)
+//    POST /launch    -> launches; JSON or form-encoded body    (auth)
 //
 
 import Foundation
@@ -132,6 +133,11 @@ struct HTTPResponse {
         HTTPResponse(status: status, reason: reason, contentType: "text/html; charset=utf-8", body: markup)
     }
 
+    /// A CSS response. Defaults to 200 OK.
+    static func css(_ source: String, status: Int = 200, reason: String = "OK") -> HTTPResponse {
+        HTTPResponse(status: status, reason: reason, contentType: "text/css; charset=utf-8", body: source)
+    }
+
     static let ok = HTTPResponse(status: 200, reason: "OK", body: #"{"ok":true}"#)
     static let launched = HTTPResponse(status: 200, reason: "OK", body: #"{"launched":true}"#)
     static let badRequest = HTTPResponse(status: 400, reason: "Bad Request", body: #"{"error":"bad request"}"#)
@@ -144,7 +150,7 @@ struct HTTPResponse {
         status: 401,
         reason: "Unauthorized",
         contentType: "text/html; charset=utf-8",
-        body: "<!doctype html><title>Plunger</title><p>Authentication required.</p>",
+        body: "<!doctype html><title>Plunger</title><link rel=\"stylesheet\" href=\"/style.css\"><p>Authentication required.</p>",
         headers: ["WWW-Authenticate": #"Basic realm="Plunger""#]
     )
 }
@@ -202,6 +208,9 @@ enum Router {
             guard authorized(request, token: store.token) else { return .respond(.unauthorized) }
             return .respond(.html(HTMLPage.form(paths: store.paths, commands: store.commands)))
 
+        case ("GET", "/style.css"):
+            return .respond(.css(HTMLPage.stylesheet))
+
         case ("GET", "/health"):
             return .respond(.ok)
 
@@ -215,7 +224,7 @@ enum Router {
         case (_, "/"):
             return .respond(.methodNotAllowed)
 
-        case (_, "/health"), (_, "/paths"), (_, "/launch"):
+        case (_, "/style.css"), (_, "/health"), (_, "/paths"), (_, "/launch"):
             return .respond(.methodNotAllowed)
 
         default:
@@ -306,9 +315,54 @@ enum FormDecoder {
 
 // MARK: - HTML
 
-/// Builds the bare-bones pages the browser sees: the launch form and the result
-/// of a launch. No CSS, no JavaScript, no external assets.
+/// Builds the pages the browser sees: the launch form and the result of a
+/// launch. Styled via a linked stylesheet at /style.css; no JavaScript.
 enum HTMLPage {
+    /// Served at GET /style.css.
+    static let stylesheet = """
+    :root {
+        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    body {
+        max-width: 32rem;
+        margin: 3rem auto;
+        padding: 0 1rem;
+        line-height: 1.5;
+    }
+
+    h1 {
+        font-size: 1.5rem;
+    }
+
+    label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 1rem;
+    }
+
+    select {
+        display: block;
+        width: 100%;
+        margin-top: 0.25rem;
+        padding: 0.4rem;
+        font-size: 1rem;
+    }
+
+    button {
+        padding: 0.5rem 1.25rem;
+        font-size: 1rem;
+        cursor: pointer;
+    }
+
+    code {
+        background: rgba(127, 127, 127, 0.2);
+        padding: 0.1rem 0.3rem;
+        border-radius: 0.25rem;
+    }
+    """
+
     /// HTML-escapes text interpolated into markup or an attribute value.
     static func escape(_ text: String) -> String {
         text.replacingOccurrences(of: "&", with: "&amp;")
@@ -329,7 +383,7 @@ enum HTMLPage {
         return """
         <!doctype html>
         <html>
-        <head><meta charset="utf-8"><title>Plunger</title></head>
+        <head><meta charset="utf-8"><title>Plunger</title><link rel="stylesheet" href="/style.css"></head>
         <body>
         <h1>Plunger</h1>
         \(note)
@@ -348,7 +402,7 @@ enum HTMLPage {
         """
         <!doctype html>
         <html>
-        <head><meta charset="utf-8"><title>Plunger</title></head>
+        <head><meta charset="utf-8"><title>Plunger</title><link rel="stylesheet" href="/style.css"></head>
         <body>
         <p>Launched <code>\(escape(entry.command))</code> in <code>\(escape(displayPath(entry.path)))</code>.</p>
         <p><a href="/">Launch another</a></p>
@@ -361,7 +415,7 @@ enum HTMLPage {
     static let unknown = """
         <!doctype html>
         <html>
-        <head><meta charset="utf-8"><title>Plunger</title></head>
+        <head><meta charset="utf-8"><title>Plunger</title><link rel="stylesheet" href="/style.css"></head>
         <body>
         <p>That path or command is no longer saved.</p>
         <p><a href="/">Back</a></p>
