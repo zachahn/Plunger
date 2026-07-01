@@ -16,6 +16,17 @@ struct Entry: Codable, Hashable, Identifiable {
     var id: String { path + "\u{0}" + command }
 
     var label: String { path + ": " + command }
+
+    /// Like `label`, but abbreviates the home directory to `~` for display.
+    var displayLabel: String { displayPath(path) + ": " + command }
+}
+
+/// Abbreviates the home directory to `~` for display. The underlying path is
+/// left untouched; this is purely cosmetic.
+func displayPath(_ path: String) -> String {
+    let home = NSHomeDirectory()
+    guard path == home || path.hasPrefix(home + "/") else { return path }
+    return "~" + path.dropFirst(home.count)
 }
 
 struct Config: Codable {

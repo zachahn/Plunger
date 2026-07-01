@@ -15,7 +15,7 @@ struct MenuContent: View {
 
     var body: some View {
         ForEach(Array(store.config.entries.enumerated()), id: \.element.id) { _, entry in
-            Button(entry.label) { Launcher.launch(entry) }
+            Button(entry.displayLabel) { Launcher.launch(entry) }
         }
 
         if !store.config.entries.isEmpty {
@@ -45,7 +45,7 @@ private struct NewMenu: View {
 
     var body: some View {
         ForEach(store.config.paths, id: \.self) { path in
-            Menu(path) {
+            Menu(displayPath(path)) {
                 CommandPicker(store: store, path: path)
             }
         }
@@ -89,7 +89,7 @@ private struct EditMenu: View {
 
     var body: some View {
         ForEach(Array(store.config.entries.enumerated()), id: \.element.id) { index, entry in
-            Button(entry.label) {
+            Button(entry.displayLabel) {
                 guard let edited = Prompt.entry(
                     title: "Edit",
                     info: "Leave a field blank to keep its current value.",
@@ -107,10 +107,10 @@ private struct DeleteMenu: View {
 
     var body: some View {
         ForEach(Array(store.config.entries.enumerated()), id: \.element.id) { index, entry in
-            Button(entry.label) {
+            Button(entry.displayLabel) {
                 guard Prompt.confirmDelete(
                     message: "Delete entry?",
-                    info: entry.label
+                    info: entry.displayLabel
                 ) else { return }
                 store.deleteEntry(at: index)
             }
@@ -124,7 +124,7 @@ private struct PathsMenu: View {
 
     var body: some View {
         ForEach(store.config.paths, id: \.self) { path in
-            Menu(path) {
+            Menu(displayPath(path)) {
                 Button("Delete") { store.deletePath(path) }
             }
         }
