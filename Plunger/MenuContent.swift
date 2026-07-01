@@ -29,6 +29,17 @@ struct MenuContent: View {
 
         Divider()
 
+        Section("HTTP server") {
+            Text(HTTPServer.url)
+            Button("Copy token") {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(store.token, forType: .string)
+            }
+        }
+
+        Divider()
+
         Button("Quit Plunger") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
     }

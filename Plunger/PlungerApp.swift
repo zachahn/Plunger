@@ -10,7 +10,14 @@ import SwiftUI
 
 @main
 struct PlungerApp: App {
-    @State private var store = ConfigStore()
+    @State private var store: ConfigStore
+    @State private var server: HTTPServer
+
+    init() {
+        let store = ConfigStore()
+        _store = State(initialValue: store)
+        _server = State(initialValue: HTTPServer(store: store))
+    }
 
     var body: some Scene {
         MenuBarExtra {
@@ -18,5 +25,12 @@ struct PlungerApp: App {
         } label: {
             Image(systemName: "wrench.and.screwdriver")
         }
+        .onChange(of: scenePhaseStarted, initial: true) { _, _ in
+            server.start()
+        }
     }
+
+    /// A constant whose `initial` onChange fires once at scene setup, giving a
+    /// hook to start the always-on server without an AppDelegate.
+    private var scenePhaseStarted: Bool { true }
 }

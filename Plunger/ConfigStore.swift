@@ -20,10 +20,27 @@ final class ConfigStore {
     private(set) var config = Config()
 
     private let defaults: UserDefaults
+    private let authToken: AuthToken
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.authToken = AuthToken(defaults: defaults)
         load()
+    }
+
+    // MARK: - Read-only queries
+
+    /// The shared bearer token for the local HTTP server.
+    var token: String { authToken.value }
+
+    /// Reports whether `path` is one of the saved paths.
+    func hasPath(_ path: String) -> Bool {
+        config.paths.contains(path)
+    }
+
+    /// Reports whether `command` is one of the saved commands.
+    func hasCommand(_ command: String) -> Bool {
+        config.commands.contains(command)
     }
 
     // MARK: - Persistence
