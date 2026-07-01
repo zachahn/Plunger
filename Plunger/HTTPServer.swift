@@ -2,10 +2,12 @@
 //  HTTPServer.swift
 //  Plunger
 //
-//  A dependency-free, loopback-only HTTP/1.1 server that drives launches
-//  programmatically. It is strictly launch-only: it exposes read-only views of
-//  the saved lists plus Launcher.launch, and reaches no mutation method on the
-//  store. The app runs without the App Sandbox, so binding 127.0.0.1 needs no
+//  A dependency-free HTTP/1.1 server that drives launches programmatically. It
+//  is strictly launch-only: it exposes read-only views of the saved lists plus
+//  Launcher.launch, and reaches no mutation method on the store. The listener
+//  binds every interface (0.0.0.0), so the launch API is reachable from the
+//  LAN; the bearer token is the only guard, and it travels over plaintext HTTP.
+//  The app runs without the App Sandbox, so binding the socket needs no
 //  entitlement.
 //
 //  Routes (one request per connection, no keep-alive):
@@ -196,7 +198,14 @@ enum Router {
 
 final class HTTPServer: @unchecked Sendable {
     static let port: UInt16 = 8765
-    static var url: String { "http://127.0.0.1:\(port)" }
+
+    /// The address shown in the menu. The listener binds every interface, so a
+    /// LAN client reaches it at this host's name; the loopback form still works
+    /// locally.
+    static var url: String {
+        let host = ProcessInfo.processInfo.hostName
+        return "http://\(host):\(port)"
+    }
 
     /// A read-only snapshot taken on the main actor before routing, so the
     /// off-actor connection handlers never touch the @MainActor store directly.
@@ -217,14 +226,14 @@ final class HTTPServer: @unchecked Sendable {
         }
     }
 
-    /// Binds 127.0.0.1:8765 and begins accepting connections. Failures are
-    /// logged; the app keeps running without the server.
+    /// Binds 0.0.0.0:8765 (every interface) and begins accepting connections.
+    /// Failures are logged; the app keeps running without the server.
     func start() {
         guard listener == nil else { return }
         let parameters = NWParameters.tcp
-        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: Self.port)!)
 
-        guard let listener = try? NWListener(using: parameters) else {
+        guard let port = NWEndpoint.Port(rawValue: Self.port),
+              let listener = try? NWListener(using: parameters, on: port) else {
             NSLog("Plunger: failed to create HTTP listener on port \(Self.port)")
             return
         }
