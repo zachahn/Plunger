@@ -313,55 +313,41 @@ enum FormDecoder {
     }
 }
 
+// MARK: - Templates
+
+/// Loads a file from Resources/ in the app bundle and substitutes `{{token}}`
+/// placeholders with caller-supplied values. No loops, no conditionals — just
+/// literal replacement, since every page here is a handful of fixed slots.
+enum Template {
+    /// Reads `name` (e.g. "form.html") from the bundle. Traps if the resource
+    /// is missing, since that's a packaging bug, not a runtime condition.
+    static func load(_ name: String) -> String {
+        let parts = name.split(separator: ".", maxSplits: 1)
+        guard let url = Bundle.main.url(forResource: String(parts[0]), withExtension: String(parts[1])),
+              let contents = try? String(contentsOf: url, encoding: .utf8) else {
+            fatalError("Plunger: missing bundled resource \(name)")
+        }
+        return contents
+    }
+
+    /// Replaces every `{{key}}` in `template` with its value from `values`.
+    static func render(_ template: String, _ values: [String: String]) -> String {
+        var result = template
+        for (key, value) in values {
+            result = result.replacingOccurrences(of: "{{\(key)}}", with: value)
+        }
+        return result
+    }
+}
+
 // MARK: - HTML
 
 /// Builds the pages the browser sees: the launch form and the result of a
-/// launch. Styled via a linked stylesheet at /style.css; no JavaScript.
+/// launch. Markup lives in Resources/*.html, rendered via `Template`; styled
+/// via a linked stylesheet at /style.css; no JavaScript.
 enum HTMLPage {
     /// Served at GET /style.css.
-    static let stylesheet = """
-    :root {
-        color-scheme: light dark;
-        font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-    }
-
-    body {
-        max-width: 32rem;
-        margin: 3rem auto;
-        padding: 0 1rem;
-        line-height: 1.5;
-    }
-
-    h1 {
-        font-size: 1.5rem;
-    }
-
-    label {
-        display: block;
-        font-weight: 600;
-        margin-bottom: 1rem;
-    }
-
-    select {
-        display: block;
-        width: 100%;
-        margin-top: 0.25rem;
-        padding: 0.4rem;
-        font-size: 1rem;
-    }
-
-    button {
-        padding: 0.5rem 1.25rem;
-        font-size: 1rem;
-        cursor: pointer;
-    }
-
-    code {
-        background: rgba(127, 127, 127, 0.2);
-        padding: 0.1rem 0.3rem;
-        border-radius: 0.25rem;
-    }
-    """
+    static let stylesheet = Template.load("style.css")
 
     /// HTML-escapes text interpolated into markup or an attribute value.
     static func escape(_ text: String) -> String {
@@ -374,54 +360,27 @@ enum HTMLPage {
     /// The launch form: two dropdowns posting to /launch. An empty list renders an
     /// empty select plus a note pointing to the menu bar.
     static func form(paths: [String], commands: [String]) -> String {
-        let pathOptions = options(paths, label: displayPath)
-        let commandOptions = options(commands, label: { $0 })
         let note = (paths.isEmpty || commands.isEmpty)
             ? "<p>No saved paths or commands yet — add them from the menu bar.</p>"
             : ""
 
-        return """
-        <!doctype html>
-        <html>
-        <head><meta charset="utf-8"><title>Plunger</title><link rel="stylesheet" href="/style.css"></head>
-        <body>
-        <h1>Plunger</h1>
-        \(note)
-        <form method="post" action="/launch">
-        <p><label>Path <select name="path">\(pathOptions)</select></label></p>
-        <p><label>Command <select name="command">\(commandOptions)</select></label></p>
-        <p><button type="submit">Launch</button></p>
-        </form>
-        </body>
-        </html>
-        """
+        return Template.render(Template.load("form.html"), [
+            "note": note,
+            "path_options": options(paths, label: displayPath),
+            "command_options": options(commands, label: { $0 }),
+        ])
     }
 
     /// The success page after a launch.
     static func launched(_ entry: Entry) -> String {
-        """
-        <!doctype html>
-        <html>
-        <head><meta charset="utf-8"><title>Plunger</title><link rel="stylesheet" href="/style.css"></head>
-        <body>
-        <p>Launched <code>\(escape(entry.command))</code> in <code>\(escape(displayPath(entry.path)))</code>.</p>
-        <p><a href="/">Launch another</a></p>
-        </body>
-        </html>
-        """
+        Template.render(Template.load("launched.html"), [
+            "command": escape(entry.command),
+            "path": escape(displayPath(entry.path)),
+        ])
     }
 
     /// The page shown when the submitted path or command is no longer saved.
-    static let unknown = """
-        <!doctype html>
-        <html>
-        <head><meta charset="utf-8"><title>Plunger</title><link rel="stylesheet" href="/style.css"></head>
-        <body>
-        <p>That path or command is no longer saved.</p>
-        <p><a href="/">Back</a></p>
-        </body>
-        </html>
-        """
+    static let unknown = Template.load("unknown.html")
 
     /// Renders `<option value="…">label</option>` for each value. The value is the
     /// stored string the router validates against; the label is for display.

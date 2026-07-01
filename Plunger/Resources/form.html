@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Plunger</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<h1>Plunger</h1>
+{{note}}
+<form method="post" action="/launch">
+<p><label>Path <select name="path">{{path_options}}</select></label></p>
+<p><label>Command <select name="command">{{command_options}}</select></label></p>
+<p><button type="submit">Launch</button></p>
+</form>
+</body>
+</html>
