@@ -2,10 +2,8 @@
 //  ConfigStore.swift
 //  Plunger
 //
-//  Owns the Config and persists it to UserDefaults. Ported from the Go app's
-//  loadConfig/saveConfig and the per-mutation helpers. The Go program stored the
-//  struct as a property-list blob under the "config" key; this keeps the same key
-//  and encoding so an existing oiio defaults file would still read.
+//  Owns the Config and persists it to UserDefaults. The struct is stored as a
+//  property-list blob under the "config" key.
 //
 
 import AppKit

@@ -60,7 +60,7 @@ private struct CheckForUpdatesButton: View {
     }
 }
 
-/// Lists saved commands; clicking one launches the (path, command) tuple.
+/// Lists saved commands; clicking one launches the (path, command) pair.
 private struct CommandLauncher: View {
     @Bindable var store: ConfigStore
     let path: String

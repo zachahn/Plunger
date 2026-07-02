@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Plunger is a macOS menu-bar app that launches Ghostty terminal tabs from saved (path, command) pairs. It is a SwiftUI port of an earlier Go/menuet app; several source comments reference the original Go behavior they preserve. The app runs without the App Sandbox (no entitlements file), which is what lets `HTTPServer` bind a raw TCP listener and `Launcher` shell out to `osascript`.
+Plunger is a macOS menu-bar app that launches Ghostty terminal tabs from saved (path, command) pairs. It is a SwiftUI app. It runs without the App Sandbox (no entitlements file), which is what lets `HTTPServer` bind a raw TCP listener and `Launcher` shell out to `osascript`.
 
 ## Build and test
 
@@ -25,7 +25,7 @@ There is one scheme, `Plunger`, covering the `Plunger`, `PlungerTests`, and `Plu
 
 ## Architecture
 
-**State and persistence.** `ConfigStore` is the single `@Observable` source of truth, holding a `Config` (arrays of `paths` and `commands` strings) persisted as a property-list blob in `UserDefaults` under the `"config"` key — kept compatible with the original Go app's defaults format. `AuthToken` persists a separate random bearer token under its own `UserDefaults` key. Both `paths` and `commands` are deduplicated, order-preserving string lists (see `Array.appendUnique` in `Config.swift`); there is no `Entry`/tuple struct — a launch is just a `(path, command)` pair validated against both lists independently.
+**State and persistence.** `ConfigStore` is the single `@Observable` source of truth, holding a `Config` (arrays of `paths` and `commands` strings) persisted as a property-list blob in `UserDefaults` under the `"config"` key. `AuthToken` persists a separate random bearer token under its own `UserDefaults` key. Both `paths` and `commands` are deduplicated, order-preserving string lists (see `Array.appendUnique` in `Config.swift`). A launch is a `(path, command)` pair — two separate arguments to `Launcher.launch`, validated against each list independently — not a stored struct.
 
 **Two UIs, one store.** `MenuContent` (menu-bar dropdown) and `EditPanelView` (a floating settings panel opened via "Settings…") both bind to the same `ConfigStore` and stay in sync through `@Observable`. The floating panel (`FloatingPanel.swift`) is plain AppKit — a non-activating `NSPanel` — because SwiftUI's `MenuBarExtra` has no equivalent that floats without stealing focus; `EditPanelController` owns its lazy construction and show/toggle lifecycle.
 

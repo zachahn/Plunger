@@ -3,7 +3,7 @@
 //  Plunger
 //
 //  A menu-bar app that launches Ghostty terminal tabs from saved
-//  (path, command) tuples. Ported from the Go menuet app.
+//  (path, command) pairs.
 //
 
 import Sparkle

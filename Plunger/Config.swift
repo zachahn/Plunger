@@ -17,7 +17,7 @@ func displayPath(_ path: String) -> String {
 }
 
 struct Config: Codable {
-    /// The default HTTP server port, matching the original Go app.
+    /// The default HTTP server port.
     static let defaultPort: UInt16 = 8765
 
     /// The source networks allowed by default: this Mac only. Users open up LAN
@@ -69,8 +69,8 @@ struct Config: Codable {
 }
 
 extension Array where Element == String {
-    /// Appends `value` unless it is empty or already present, mirroring the Go
-    /// `appendUnique` helper. The pick-lists hold no blanks and no duplicates.
+    /// Appends `value` unless it is empty or already present. The pick-lists
+    /// hold no blanks and no duplicates.
     mutating func appendUnique(_ value: String) {
         guard !value.isEmpty, !contains(value) else { return }
         append(value)

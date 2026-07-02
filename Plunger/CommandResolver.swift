@@ -2,10 +2,9 @@
 //  CommandResolver.swift
 //  Plunger
 //
-//  Resolves a command's program to an absolute path. Ported from the Go app's
-//  resolveProgram/resolveCommand. A GUI app launched from Finder inherits a
-//  minimal PATH that usually lacks Homebrew, so the common bin directories are
-//  searched explicitly.
+//  Resolves a command's program to an absolute path. A GUI app launched from
+//  Finder inherits a minimal PATH that usually lacks Homebrew, so the common bin
+//  directories are searched explicitly.
 //
 
 import Foundation
