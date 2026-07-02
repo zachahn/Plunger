@@ -133,6 +133,14 @@ private struct HTTPServerColumn: View {
                         }
                     }
                 }
+                if store.config.allowedPeers.contains(.any) {
+                    Label(
+                        "Any host that can reach this port is allowed to connect.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .foregroundStyle(.orange)
+                    .font(.callout)
+                }
                 if store.config.allowedPeers.isEmpty {
                     Label(
                         "No networks are allowed — the server will refuse every connection.",
