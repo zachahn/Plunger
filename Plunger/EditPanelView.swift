@@ -132,6 +132,10 @@ private struct HTTPServerColumn: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    // "Any" subsumes the others: while it's on, show them as
+                    // checked and locked. The stored set is untouched, so
+                    // clearing "Any" restores whatever was selected before.
+                    .disabled(category != .any && store.config.allowedPeers.contains(.any))
                 }
                 if store.config.allowedPeers.contains(.any) {
                     Label(
@@ -165,7 +169,12 @@ private struct HTTPServerColumn: View {
     /// Changes take effect on the next connection; no restart needed.
     private func binding(for category: PeerCategory) -> Binding<Bool> {
         Binding(
-            get: { store.config.allowedPeers.contains(category) },
+            get: {
+                // "Any" being enabled makes every category effective, so show
+                // the others as checked without altering the stored set.
+                if category != .any && store.config.allowedPeers.contains(.any) { return true }
+                return store.config.allowedPeers.contains(category)
+            },
             set: { isOn in
                 var peers = store.config.allowedPeers
                 if isOn { peers.insert(category) } else { peers.remove(category) }
