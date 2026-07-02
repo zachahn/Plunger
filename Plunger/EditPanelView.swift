@@ -70,7 +70,7 @@ private struct HTTPServerColumn: View {
     var body: some View {
         Form {
             LabeledContent("URL") {
-                Text(HTTPServer.url(port: store.config.port)).textSelection(.enabled)
+                Text(HTTPServer.url(port: store.config.boundPort)).textSelection(.enabled)
             }
             LabeledContent("Username") {
                 Text(Router.username).textSelection(.enabled)

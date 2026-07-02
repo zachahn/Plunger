@@ -5,7 +5,8 @@
 //  A dependency-free HTTP/1.1 server that drives launches programmatically. It
 //  is strictly launch-only: it exposes read-only views of the saved lists plus
 //  Launcher.launch, and reaches no mutation method on the store. The listener
-//  binds every interface (0.0.0.0) on the configured port (default 8765), so
+//  binds every interface (0.0.0.0) on the configured port (default 8765; dev
+//  builds always bind 8766, ignoring the stored port), so
 //  the launch API is reachable from the LAN. Two guards sit in front: a peer
 //  filter (see PeerFilter) drops any connection whose source IP is not in an
 //  allowed network — loopback, Tailscale (100.64.0.0/10), LAN, or any — and the
@@ -468,7 +469,7 @@ final class HTTPServer {
                 hasCommand: { store.hasCommand($0) }
             )
         }
-        self.portProvider = { store.config.port }
+        self.portProvider = { store.config.boundPort }
         self.filterProvider = { PeerFilter(allowed: store.config.allowedPeers) }
     }
 

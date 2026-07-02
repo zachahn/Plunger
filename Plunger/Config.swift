@@ -20,6 +20,24 @@ struct Config: Codable {
     /// The default HTTP server port.
     static let defaultPort: UInt16 = 8765
 
+    /// The port a dev build always binds, ignoring the stored `port`. Dev and
+    /// release share one UserDefaults domain, so a stored port would otherwise be
+    /// shared between them; forcing this in DEBUG keeps a running dev build off
+    /// the release build's port no matter what is saved.
+    #if DEBUG
+    static let devPort: UInt16 = 8766
+    #endif
+
+    /// The port the server actually binds. In release this is the stored `port`;
+    /// in a dev build it is always `devPort`, so the two builds never collide.
+    var boundPort: UInt16 {
+        #if DEBUG
+        Self.devPort
+        #else
+        port
+        #endif
+    }
+
     /// The source networks allowed by default: this Mac only. Users open up LAN
     /// or tailnet access from the HTTP Server settings tab.
     static let defaultAllowedPeers: Set<PeerCategory> = [.loopback]
