@@ -1,2 +1,5 @@
 # Release pipeline output (see Rakefile)
 /build/
+
+# Per-machine release configuration (see Rakefile)
+/release.json
