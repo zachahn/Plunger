@@ -36,7 +36,7 @@ struct PlungerApp: App {
         MenuBarExtra {
             MenuContent(store: store, editPanel: editPanel, updater: updaterController.updater)
         } label: {
-            Image("MenuBarIcon")
+            menuBarLabel
         }
         .onChange(of: scenePhaseStarted, initial: true) { _, _ in
             server.start()
@@ -46,4 +46,16 @@ struct PlungerApp: App {
     /// A constant whose `initial` onChange fires once at scene setup, giving a
     /// hook to start the always-on server without an AppDelegate.
     private var scenePhaseStarted: Bool { true }
+
+    /// The menu-bar label. Shows the original PNG in development and a more
+    /// expected icon in production.
+    @ViewBuilder
+    private var menuBarLabel: some View {
+        #if DEBUG
+        Image("MenuBarIcon")
+            .renderingMode(.original)
+        #else
+        Image("MenuBarIcon")
+        #endif
+    }
 }
