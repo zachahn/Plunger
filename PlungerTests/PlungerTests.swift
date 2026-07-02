@@ -405,6 +405,36 @@ struct FormDecoderTests {
     }
 }
 
+// MARK: - Login shell wrapping
+
+@Suite("Launcher.loginShellWrapped")
+struct LoginShellWrappedTests {
+    @Test func wrapsPlainCommandInLoginInteractiveZsh() {
+        #expect(Launcher.loginShellWrapped("/usr/bin/irb") == "/bin/zsh -lic '/usr/bin/irb'")
+    }
+
+    @Test func keepsArgumentsInsideSingleQuotes() {
+        // Spaces stay within one quoted argument, not split into argv words.
+        #expect(Launcher.loginShellWrapped("/bin/ls -la /tmp") == "/bin/zsh -lic '/bin/ls -la /tmp'")
+    }
+
+    @Test func escapesEmbeddedSingleQuote() {
+        // A single quote closes, escapes a literal quote, and reopens: '\''.
+        #expect(
+            Launcher.loginShellWrapped("git commit -m 'wip'")
+                == #"/bin/zsh -lic 'git commit -m '\''wip'\'''"#
+        )
+    }
+
+    @Test func leavesDoubleQuotesUntouched() {
+        // Double quotes are literal inside single quotes; no escaping needed.
+        #expect(
+            Launcher.loginShellWrapped(#"echo "a b""#)
+                == #"/bin/zsh -lic 'echo "a b"'"#
+        )
+    }
+}
+
 // MARK: - HTML escaping
 
 struct HTMLPageTests {
