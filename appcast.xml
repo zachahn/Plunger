@@ -6,12 +6,24 @@
         <description>Updates for Plunger, the Ghostty menu-bar launcher.</description>
         <language>en</language>
         <item>
+            <title>1.1</title>
+            <pubDate>Thu, 02 Jul 2026 09:47:26 -0400</pubDate>
+            <sparkle:version>7</sparkle:version>
+            <sparkle:shortVersionString>1.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.5</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/zachahn/Plunger/releases/download/v1.1/Plunger-1.1.zip" length="1450802" type="application/octet-stream" sparkle:edSignature="ogz38UzX2Me9MgoQS2XoMPLytlXT7Q58Qmq9CpReoE3WLSaq4mAtqs97iLsmvt8xytuOebGGifbhxaXz9/C+BA=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/zachahn/Plunger/releases/download/v1.1/Plunger7-6.delta" sparkle:deltaFrom="6" length="29894" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="975840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="HlUG5o3l/7kJQ/5uEODohCAOQSbaAu2UKEA5jAusQlBVLiXnUeHY9Zfzhm2j3O6MnjOrcfU5J1nA0Zr/gTo7Bg=="/>
+                <enclosure url="https://github.com/zachahn/Plunger/releases/download/v1.1/Plunger7-5.delta" sparkle:deltaFrom="5" length="30294" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="975840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="sJ+G584QYePmDT4V9SlMMMJXO3sS6w57wBtXfafBuFGo6W1rhmtBNEcJSGK4v0OAEyH6coAOI2HoNNVL2MflAg=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>1.0</title>
             <pubDate>Wed, 01 Jul 2026 22:24:23 -0400</pubDate>
             <sparkle:version>6</sparkle:version>
             <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.5</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/zachahn/Plunger/releases/download/v1.0/Plunger-1.0.zip" length="1450565" type="application/octet-stream" sparkle:edSignature="IV4VYo8J7y0vTqv+svaj4YgzZQclZFulLn78TrD4rIMXg43wceCrKa8YEa9lW8MCEfzm1Yyw0C+k7gAcW4z1AQ=="/>
+            <enclosure url="https://github.com/zachahn/Plunger/releases/download/v1.1/Plunger-1.0.zip" length="1450565" type="application/octet-stream" sparkle:edSignature="IV4VYo8J7y0vTqv+svaj4YgzZQclZFulLn78TrD4rIMXg43wceCrKa8YEa9lW8MCEfzm1Yyw0C+k7gAcW4z1AQ=="/>
             <sparkle:deltas>
                 <enclosure url="https://github.com/zachahn/Plunger/releases/download/v1.0/Plunger6-5.delta" sparkle:deltaFrom="5" length="11690" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="975840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="nHrM5zS3onHibirZT9Fw/cLiVcM3qXV0/C+0TTS+zY9PUHUJMG21WU7TIF8Fp7ywJyikRfu/Se5a8Iu4K8YaDA=="/>
             </sparkle:deltas>
@@ -22,7 +34,7 @@
             <sparkle:version>5</sparkle:version>
             <sparkle:shortVersionString>1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.5</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/zachahn/Plunger/releases/download/v1.0/Plunger-1.zip" length="1450577" type="application/octet-stream" sparkle:edSignature="nGQMn6izHHm1vEhvDZq55vC/1LAwwQA2s/pZBNDJpsYaEUUU7iXp3ryaa+kaVCipWrsb6UCSf/LNLpMSE7PaCw=="/>
+            <enclosure url="https://github.com/zachahn/Plunger/releases/download/v1.1/Plunger-1.zip" length="1450577" type="application/octet-stream" sparkle:edSignature="nGQMn6izHHm1vEhvDZq55vC/1LAwwQA2s/pZBNDJpsYaEUUU7iXp3ryaa+kaVCipWrsb6UCSf/LNLpMSE7PaCw=="/>
         </item>
     </channel>
 </rss>
