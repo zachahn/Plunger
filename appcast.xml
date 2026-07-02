@@ -5,5 +5,13 @@
         <link>https://raw.githubusercontent.com/zachahn/Plunger/main/appcast.xml</link>
         <description>Updates for Plunger, the Ghostty menu-bar launcher.</description>
         <language>en</language>
+        <item>
+            <title>1</title>
+            <pubDate>Wed, 01 Jul 2026 09:55:10 -0400</pubDate>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.5</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/zachahn/Plunger/releases/download/v1/Plunger-1.zip" length="1450577" type="application/octet-stream" sparkle:edSignature="nGQMn6izHHm1vEhvDZq55vC/1LAwwQA2s/pZBNDJpsYaEUUU7iXp3ryaa+kaVCipWrsb6UCSf/LNLpMSE7PaCw=="/>
+        </item>
     </channel>
 </rss>
