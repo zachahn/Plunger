@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <defs>
+    <mask id="mouth" maskUnits="userSpaceOnUse" x="0" y="0" width="108" height="108">
+      <rect x="0" y="0" width="108" height="108" fill="#FFFFFF"/>
+      <g transform="translate(58,55) rotate(-40) scale(0.17)">
+        <ellipse cx="0" cy="206" rx="116" ry="26" fill="#000000"/>
+      </g>
+    </mask>
+  </defs>
+
+  <g mask="url(#mouth)">
+    <g transform="translate(58,55) rotate(-40) scale(0.17)">
+      <!-- handle: furthest back -->
+      <rect x="-38" y="-1200" width="76" height="980" rx="18" fill="#C08445"/>
+      <!-- collar: overlaps the handle, tucks behind the dome -->
+      <path d="M -54,-244 A 54 16 0 0 1 54,-244 L 54,-170 L -54,-170 Z" fill="#B84E14"/>
+      <!-- dome: frontmost; its top edge occludes the collar -->
+      <path d="M -215,95
+               C -218,-35 -162,-150 -58,-188
+               A 58 14 0 0 1 58,-188
+               C 162,-150 218,-35 215,95
+               A 215 35 0 0 1 -215,95
+               Z"
+            fill="#E4691F"/>
+      <!-- short cylinder flaring to the mouth -->
+      <path d="M -132,122
+               A 132 28 0 0 1 132,122
+               C 132,162 134,186 144,208
+               A 144 32 0 0 1 -144,208
+               C -134,186 -132,162 -132,122
+               Z"
+            fill="#B94E12"/>
+      <!-- opening lip -->
+      <ellipse cx="0" cy="208" rx="144" ry="32" fill="#C85A1A"/>
+    </g>
+  </g>
+</svg>
