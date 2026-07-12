@@ -402,17 +402,17 @@ enum HTMLPage {
     }
 
     /// The launch form: two dropdowns posting to /launch. Regular commands open a
-    /// terminal; raw commands run directly and are labeled "(raw)" in the same
-    /// dropdown. An empty list renders an empty select plus a note pointing to the
-    /// menu bar.
+    /// terminal; raw commands run directly. The two kinds are split into separate
+    /// `<optgroup>` sections. An empty list renders an empty select plus a note
+    /// pointing to the menu bar.
     static func form(paths: [String], commands: [String], rawCommands: [String]) -> String {
         let hasAnyCommand = !commands.isEmpty || !rawCommands.isEmpty
         let note = (paths.isEmpty || !hasAnyCommand)
             ? "<p>No saved paths or commands yet — add them from the menu bar.</p>"
             : ""
 
-        let commandOptions = options(commands.sortedForDisplay(), label: { $0 })
-            + options(rawCommands.sortedForDisplay(), label: { "\($0)  (raw)" })
+        let commandOptions = optgroup("Commands", options(commands.sortedForDisplay(), label: { $0 }))
+            + optgroup("Raw commands", options(rawCommands.sortedForDisplay(), label: { $0 }))
 
         return Template.render(formTemplate, [
             "note": note,
@@ -441,6 +441,12 @@ enum HTMLPage {
         values.map { value in
             "<option value=\"\(escape(value))\">\(escape(label(value)))</option>"
         }.joined()
+    }
+
+    /// Wraps rendered options in an `<optgroup>` with `label`. Returns an empty
+    /// string when there are no options, so an empty command list adds no group.
+    private static func optgroup(_ label: String, _ options: String) -> String {
+        options.isEmpty ? "" : "<optgroup label=\"\(escape(label))\">\(options)</optgroup>"
     }
 }
 
