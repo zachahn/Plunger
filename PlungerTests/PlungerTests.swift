@@ -102,6 +102,8 @@ struct RouterTests {
     private func storeView(
         paths: [String] = ["/work"],
         commands: [String] = ["/bin/zsh"],
+        rawCommands: [String] = [],
+        terminal: Terminal = .ghostty,
         authEnabled: Bool = true
     ) -> Router.StoreView {
         Router.StoreView(
@@ -109,8 +111,11 @@ struct RouterTests {
             authEnabled: authEnabled,
             paths: paths,
             commands: commands,
+            rawCommands: rawCommands,
+            terminal: terminal,
             hasPath: { paths.contains($0) },
-            hasCommand: { commands.contains($0) }
+            hasCommand: { commands.contains($0) },
+            hasRawCommand: { rawCommands.contains($0) }
         )
     }
 
@@ -261,7 +266,34 @@ struct RouterTests {
                     body: #"{"path":"/work","command":"/bin/zsh"}"#),
             store: storeView()
         )
-        #expect(outcome == .launch(path: "/work", command: "/bin/zsh", success: .launched))
+        #expect(outcome == .launch(path: "/work", command: "/bin/zsh", terminal: .ghostty, success: .launched))
+    }
+
+    @Test func launchCarriesConfiguredTerminal() {
+        let outcome = Router.route(
+            request(method: "POST", target: "/launch", token: token,
+                    body: #"{"path":"/work","command":"/bin/zsh"}"#),
+            store: storeView(terminal: .iterm)
+        )
+        #expect(outcome == .launch(path: "/work", command: "/bin/zsh", terminal: .iterm, success: .launched))
+    }
+
+    @Test func rawCommandYieldsInterpolatedRawLaunch() {
+        let outcome = Router.route(
+            request(method: "POST", target: "/launch", token: token,
+                    body: #"{"path":"/work","command":"echo {{path}}"}"#),
+            store: storeView(commands: [], rawCommands: ["echo {{path}}"])
+        )
+        #expect(outcome == .launchRaw(path: "/work", command: "echo /work", success: .launched))
+    }
+
+    @Test func unknownRawCommandIsNotFound() {
+        let outcome = Router.route(
+            request(method: "POST", target: "/launch", token: token,
+                    body: #"{"path":"/work","command":"echo hi"}"#),
+            store: storeView(commands: [], rawCommands: [])
+        )
+        #expect(outcome == .respond(.notFound))
     }
 
     @Test func wrongMethodOnKnownRouteIsMethodNotAllowed() {
@@ -335,7 +367,7 @@ struct RouterTests {
                     body: "path=%2Fwork&command=%2Fbin%2Fzsh"),
             store: storeView()
         )
-        guard case let .launch(path, command, success) = outcome else {
+        guard case let .launch(path, command, _, success) = outcome else {
             Issue.record("expected a launch outcome")
             return
         }
@@ -529,5 +561,48 @@ struct PeerFilterTests {
         #expect(filter.allows(ip("127.0.0.1")))
         #expect(filter.allows(ip("100.64.0.1")))
         #expect(filter.allows(ip("192.168.1.1")) == false)
+    }
+}
+
+// MARK: - Interpolation
+
+struct InterpolationTests {
+    @Test func basicSingleSubstitution() {
+        let result = Interpolation.render("hello {{name}}", values: ["name": "world"])
+        #expect(result == "hello world")
+    }
+
+    @Test func multiplePlaceholders() {
+        let result = Interpolation.render("{{greeting}}, {{name}}!", values: ["greeting": "hi", "name": "bob"])
+        #expect(result == "hi, bob!")
+    }
+
+    @Test func whitespaceInsideBraces() {
+        let result = Interpolation.render("{{ path }}", values: ["path": "/usr/bin"])
+        #expect(result == "/usr/bin")
+    }
+
+    @Test func unknownKeyLeftVerbatim() {
+        let result = Interpolation.render("{{missing}}", values: [:])
+        #expect(result == "{{missing}}")
+    }
+
+    @Test func unmatchedOpenBraceEmittedVerbatim() {
+        let result = Interpolation.render("before {{unclosed rest", values: ["unclosed": "x"])
+        #expect(result == "before {{unclosed rest")
+    }
+
+    @Test func emptyTemplateReturnsEmpty() {
+        #expect(Interpolation.render("", values: ["name": "world"]) == "")
+    }
+
+    @Test func noPlaceholderPassesThroughUnchanged() {
+        let result = Interpolation.render("plain text", values: ["name": "world"])
+        #expect(result == "plain text")
+    }
+
+    @Test func adjacentPlaceholders() {
+        let result = Interpolation.render("{{a}}{{b}}", values: ["a": "1", "b": "2"])
+        #expect(result == "12")
     }
 }

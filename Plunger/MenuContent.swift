@@ -60,18 +60,32 @@ private struct CheckForUpdatesButton: View {
     }
 }
 
-/// Lists saved commands; clicking one launches the (path, command) pair.
+/// Lists saved commands; clicking one launches the (path, command) pair. Regular
+/// commands open a terminal; raw commands run directly with `{{path}}`/
+/// `{{command}}` interpolation.
 private struct CommandLauncher: View {
     @Bindable var store: ConfigStore
     let path: String
 
     var body: some View {
-        if store.config.commands.isEmpty {
+        if store.config.commands.isEmpty && store.config.rawCommands.isEmpty {
             Text("(no saved commands)")
         } else {
             ForEach(store.config.commands.sortedForDisplay(), id: \.self) { command in
                 Button(command) {
-                    Launcher.launch(path: path, command: command)
+                    Launcher.launch(path: path, command: command, terminal: store.config.terminal)
+                }
+            }
+            if !store.config.rawCommands.isEmpty {
+                Divider()
+                ForEach(store.config.rawCommands.sortedForDisplay(), id: \.self) { command in
+                    Button(command) {
+                        let rendered = Interpolation.render(
+                            command,
+                            values: ["path": path, "command": command]
+                        )
+                        Launcher.launchRaw(path: path, command: rendered)
+                    }
                 }
             }
         }

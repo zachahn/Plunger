@@ -59,6 +59,11 @@ final class ConfigStore {
         config.commands.contains(command)
     }
 
+    /// Reports whether `command` is one of the saved raw commands.
+    func hasRawCommand(_ command: String) -> Bool {
+        config.rawCommands.contains(command)
+    }
+
     // MARK: - Persistence
 
     /// Reads the config from UserDefaults.
@@ -90,6 +95,11 @@ final class ConfigStore {
         save()
     }
 
+    func addRawCommand(_ command: String) {
+        config.rawCommands.appendUnique(command)
+        save()
+    }
+
     /// Rewrites `path` to `newPath` in place, preserving its position. A no-op
     /// when `path` isn't saved, `newPath` is blank, or `newPath` is already
     /// saved.
@@ -117,6 +127,29 @@ final class ConfigStore {
 
     func deleteCommand(_ command: String) {
         config.commands.removeAll { $0 == command }
+        save()
+    }
+
+    /// Rewrites `command` to `newCommand` among the raw commands, preserving its
+    /// position. A no-op when `command` isn't saved, `newCommand` is blank, or
+    /// `newCommand` is already saved.
+    func updateRawCommand(_ command: String, to newCommand: String) {
+        guard !newCommand.isEmpty, newCommand == command || !config.rawCommands.contains(newCommand) else { return }
+        guard let index = config.rawCommands.firstIndex(of: command) else { return }
+        config.rawCommands[index] = newCommand
+        save()
+    }
+
+    func deleteRawCommand(_ command: String) {
+        config.rawCommands.removeAll { $0 == command }
+        save()
+    }
+
+    /// Sets the terminal a launch opens. A no-op when unchanged. Takes effect on
+    /// the next launch; no restart needed.
+    func setTerminal(_ terminal: Terminal) {
+        guard terminal != config.terminal else { return }
+        config.terminal = terminal
         save()
     }
 

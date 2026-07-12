@@ -3,7 +3,8 @@
 //  Plunger
 //
 //  The persistent edit panel's content (see FloatingPanel.swift): a TabView
-//  with a Table tab each for Paths and Commands, plus an HTTP Server tab. In a
+//  with a Table tab each for Paths, Commands, and Raw commands, plus an HTTP
+//  Server tab. The Commands tab also carries the terminal picker. In a
 //  table tab, click selects a row; double-click or the right-click menu edits
 //  it (in a sheet); Delete key or the − button removes it. A +/− bar under each
 //  table handles add/remove, since SwiftUI's Table has no built-in one. Rows
@@ -41,6 +42,8 @@ struct EditPanelView: View {
                 .tabItem { Label("Paths", systemImage: "folder") }
             CommandsColumn(store: store)
                 .tabItem { Label("Commands", systemImage: "terminal") }
+            RawCommandsColumn(store: store)
+                .tabItem { Label("Raw", systemImage: "chevron.left.forwardslash.chevron.right") }
             HTTPServerColumn(store: store, server: server)
                 .tabItem { Label("HTTP Server", systemImage: "network") }
         }
@@ -383,33 +386,56 @@ private struct CommandsColumn: View {
     }
 
     var body: some View {
-        TabColumn {
-            Table(of: Row.self, selection: $selection) {
-                TableColumn("Command") { row in
-                    Text(row.value)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+        VStack(spacing: 0) {
+            // The terminal a regular command opens in. Raw commands ignore it and
+            // run directly, so this setting lives with the commands it affects.
+            HStack {
+                Picker("Terminal", selection: Binding(
+                    get: { store.config.terminal },
+                    set: { store.setTerminal($0) }
+                )) {
+                    ForEach(Terminal.allCases) { terminal in
+                        Text(terminal.label).tag(terminal)
+                    }
                 }
-            } rows: {
-                ForEach(store.config.commands.sortedForDisplay().asRows()) { row in
-                    TableRow(row)
-                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                .help("Which terminal app a saved command opens in. Raw commands ignore this and run directly.")
+                Spacer()
             }
-            .contextMenu(forSelectionType: Row.ID.self) { ids in
-                if let value = ids.first {
-                    Button("Edit…") { sheet = .edit(value) }
-                    Button("Delete", role: .destructive) { pendingDelete = value }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 8)
+
+            Divider()
+
+            TabColumn {
+                Table(of: Row.self, selection: $selection) {
+                    TableColumn("Command") { row in
+                        Text(row.value)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                } rows: {
+                    ForEach(store.config.commands.sortedForDisplay().asRows()) { row in
+                        TableRow(row)
+                    }
                 }
-            } primaryAction: { ids in
-                if let value = ids.first { sheet = .edit(value) }
+                .contextMenu(forSelectionType: Row.ID.self) { ids in
+                    if let value = ids.first {
+                        Button("Edit…") { sheet = .edit(value) }
+                        Button("Delete", role: .destructive) { pendingDelete = value }
+                    }
+                } primaryAction: { ids in
+                    if let value = ids.first { sheet = .edit(value) }
+                }
+                .onDeleteCommand { if let value = selection { pendingDelete = value } }
+            } footer: {
+                PlusMinusBar(
+                    canRemove: selection != nil,
+                    onAdd: { sheet = .add },
+                    onRemove: { if let value = selection { pendingDelete = value } }
+                )
             }
-            .onDeleteCommand { if let value = selection { pendingDelete = value } }
-        } footer: {
-            PlusMinusBar(
-                canRemove: selection != nil,
-                onAdd: { sheet = .add },
-                onRemove: { if let value = selection { pendingDelete = value } }
-            )
         }
         .sheet(item: $sheet) { sheet in
             switch sheet {
@@ -485,6 +511,132 @@ private struct CommandForm: View {
             notFoundAlert = true
             return
         }
+        onSave(trimmed)
+        dismiss()
+    }
+}
+
+private struct RawCommandsColumn: View {
+    @Bindable var store: ConfigStore
+    @State private var pendingDelete: String?
+    @State private var sheet: RawCommandSheet?
+    @State private var selection: Row.ID?
+
+    /// The add/edit form shown in a sheet. `edit` carries the row being edited.
+    private enum RawCommandSheet: Identifiable {
+        case add
+        case edit(String)
+
+        var id: String {
+            switch self {
+            case .add: ""
+            case .edit(let value): value
+            }
+        }
+    }
+
+    var body: some View {
+        TabColumn {
+            Table(of: Row.self, selection: $selection) {
+                TableColumn("Raw Command") { row in
+                    Text(row.value)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            } rows: {
+                ForEach(store.config.rawCommands.sortedForDisplay().asRows()) { row in
+                    TableRow(row)
+                }
+            }
+            .contextMenu(forSelectionType: Row.ID.self) { ids in
+                if let value = ids.first {
+                    Button("Edit…") { sheet = .edit(value) }
+                    Button("Delete", role: .destructive) { pendingDelete = value }
+                }
+            } primaryAction: { ids in
+                if let value = ids.first { sheet = .edit(value) }
+            }
+            .onDeleteCommand { if let value = selection { pendingDelete = value } }
+        } footer: {
+            PlusMinusBar(
+                canRemove: selection != nil,
+                onAdd: { sheet = .add },
+                onRemove: { if let value = selection { pendingDelete = value } }
+            )
+        }
+        .sheet(item: $sheet) { sheet in
+            switch sheet {
+            case .add:
+                RawCommandForm(title: "New Raw Command") { store.addRawCommand($0) }
+            case .edit(let value):
+                RawCommandForm(title: "Edit Raw Command", initialCommand: value) {
+                    store.updateRawCommand(value, to: $0)
+                }
+            }
+        }
+        .alert(
+            "Delete raw command?",
+            isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+            presenting: pendingDelete
+        ) { command in
+            Button("Delete", role: .destructive) { store.deleteRawCommand(command) }
+            Button("Cancel", role: .cancel) {}
+        } message: { command in
+            Text(command)
+        }
+    }
+}
+
+/// A small form for typing an arbitrary shell command, shown in a sheet. Unlike
+/// CommandForm, a raw command isn't resolved or checked against disk — it can be
+/// any string, including template placeholders — so Save only requires
+/// non-empty text.
+private struct RawCommandForm: View {
+    let title: String
+    var initialCommand: String = ""
+    let onSave: (String) -> Void
+
+    @State private var command: String
+    @Environment(\.dismiss) private var dismiss
+
+    init(title: String, initialCommand: String = "", onSave: @escaping (String) -> Void) {
+        self.title = title
+        self.initialCommand = initialCommand
+        self.onSave = onSave
+        _command = State(initialValue: initialCommand)
+    }
+
+    private var trimmed: String {
+        command.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(title).font(.headline)
+
+            TextField("Raw Command", text: $command)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(save)
+
+            Text("Runs directly, no terminal. Use {{path}} and {{command}} as placeholders.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save", action: save)
+                    .disabled(trimmed.isEmpty)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 340)
+    }
+
+    private func save() {
+        guard !trimmed.isEmpty else { return }
         onSave(trimmed)
         dismiss()
     }

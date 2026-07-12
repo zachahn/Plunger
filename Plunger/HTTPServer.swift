@@ -174,7 +174,11 @@ private struct LaunchBody: Decodable {
 /// client gets JSON.
 enum RouteOutcome: Equatable {
     case respond(HTTPResponse)
-    case launch(path: String, command: String, success: HTTPResponse)
+    /// A terminal launch: open `command` in `terminal` at `path`.
+    case launch(path: String, command: String, terminal: Terminal, success: HTTPResponse)
+    /// A raw launch: run the already-interpolated `command` directly at `path`,
+    /// no terminal window.
+    case launchRaw(path: String, command: String, success: HTTPResponse)
 }
 
 /// Pure routing: maps a request plus a read-only store view to an outcome. It
@@ -186,8 +190,11 @@ enum Router {
         var authEnabled: Bool
         var paths: [String]
         var commands: [String]
+        var rawCommands: [String]
+        var terminal: Terminal
         var hasPath: (String) -> Bool
         var hasCommand: (String) -> Bool
+        var hasRawCommand: (String) -> Bool
     }
 
     /// The fixed username both auth styles must carry.
@@ -197,7 +204,11 @@ enum Router {
         switch (request.method, request.target) {
         case ("GET", "/"):
             guard authorized(request, store: store) else { return .respond(.unauthorized) }
-            return .respond(.html(HTMLPage.form(paths: store.paths, commands: store.commands)))
+            return .respond(.html(HTMLPage.form(
+                paths: store.paths,
+                commands: store.commands,
+                rawCommands: store.rawCommands
+            )))
 
         case ("GET", "/style.css"):
             return .respond(.css(HTMLPage.stylesheet))
@@ -285,14 +296,22 @@ enum Router {
         guard let parsed = parse(request, isForm: isForm) else {
             return .respond(.badRequest)
         }
-        guard store.hasPath(parsed.path), store.hasCommand(parsed.command) else {
+        let isRaw = store.hasRawCommand(parsed.command)
+        guard store.hasPath(parsed.path), store.hasCommand(parsed.command) || isRaw else {
             return .respond(isForm ? .html(HTMLPage.unknown, status: 404, reason: "Not Found") : .notFound)
         }
 
         let success = isForm
             ? HTTPResponse.html(HTMLPage.launched(path: parsed.path, command: parsed.command))
             : HTTPResponse.launched
-        return .launch(path: parsed.path, command: parsed.command, success: success)
+        if isRaw {
+            let rendered = Interpolation.render(
+                parsed.command,
+                values: ["path": parsed.path, "command": parsed.command]
+            )
+            return .launchRaw(path: parsed.path, command: rendered, success: success)
+        }
+        return .launch(path: parsed.path, command: parsed.command, terminal: store.terminal, success: success)
     }
 
     /// Reads (path, command) from the body in whichever encoding the request used.
@@ -382,17 +401,23 @@ enum HTMLPage {
             .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
-    /// The launch form: two dropdowns posting to /launch. An empty list renders an
-    /// empty select plus a note pointing to the menu bar.
-    static func form(paths: [String], commands: [String]) -> String {
-        let note = (paths.isEmpty || commands.isEmpty)
+    /// The launch form: two dropdowns posting to /launch. Regular commands open a
+    /// terminal; raw commands run directly and are labeled "(raw)" in the same
+    /// dropdown. An empty list renders an empty select plus a note pointing to the
+    /// menu bar.
+    static func form(paths: [String], commands: [String], rawCommands: [String]) -> String {
+        let hasAnyCommand = !commands.isEmpty || !rawCommands.isEmpty
+        let note = (paths.isEmpty || !hasAnyCommand)
             ? "<p>No saved paths or commands yet — add them from the menu bar.</p>"
             : ""
+
+        let commandOptions = options(commands.sortedForDisplay(), label: { $0 })
+            + options(rawCommands.sortedForDisplay(), label: { "\($0)  (raw)" })
 
         return Template.render(formTemplate, [
             "note": note,
             "path_options": options(paths.sortedForDisplay(), label: displayPath),
-            "command_options": options(commands.sortedForDisplay(), label: { $0 }),
+            "command_options": commandOptions,
         ])
     }
 
@@ -465,8 +490,11 @@ final class HTTPServer {
                 authEnabled: store.config.authEnabled,
                 paths: store.config.paths,
                 commands: store.config.commands,
+                rawCommands: store.config.rawCommands,
+                terminal: store.config.terminal,
                 hasPath: { store.hasPath($0) },
-                hasCommand: { store.hasCommand($0) }
+                hasCommand: { store.hasCommand($0) },
+                hasRawCommand: { store.hasRawCommand($0) }
             )
         }
         self.portProvider = { store.config.boundPort }
@@ -611,8 +639,11 @@ final class HTTPServer {
             switch Router.route(request, store: view) {
             case let .respond(response):
                 HTTPServer.respond(connection, with: response)
-            case let .launch(path, command, success):
-                Launcher.launch(path: path, command: command)
+            case let .launch(path, command, terminal, success):
+                Launcher.launch(path: path, command: command, terminal: terminal)
+                HTTPServer.respond(connection, with: success)
+            case let .launchRaw(path, command, success):
+                Launcher.launchRaw(path: path, command: command)
                 HTTPServer.respond(connection, with: success)
             }
         }

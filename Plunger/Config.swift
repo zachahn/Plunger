@@ -42,8 +42,20 @@ struct Config: Codable {
     /// or tailnet access from the HTTP Server settings tab.
     static let defaultAllowedPeers: Set<PeerCategory> = [.loopback]
 
+    /// The terminal a launch opens a tab in by default.
+    static let defaultTerminal: Terminal = .ghostty
+
     var paths: [String] = []
     var commands: [String] = []
+
+    /// Commands that run directly (no terminal window) with `{{path}}` and
+    /// `{{command}}` interpolation. Deduplicated and order-preserving like the
+    /// other lists.
+    var rawCommands: [String] = []
+
+    /// The terminal app a launch opens. Decodes to `defaultTerminal` for older
+    /// configs that predate this field.
+    var terminal: Terminal = defaultTerminal
 
     /// The port the local HTTP server binds. Decodes to `defaultPort` for older
     /// stored configs that predate this field.
@@ -58,31 +70,37 @@ struct Config: Codable {
     var authEnabled: Bool = true
 
     enum CodingKeys: String, CodingKey {
-        case paths, commands, port, allowedPeers, authEnabled
+        case paths, commands, rawCommands, port, allowedPeers, authEnabled, terminal
     }
 
     init(
         paths: [String] = [],
         commands: [String] = [],
+        rawCommands: [String] = [],
         port: UInt16 = defaultPort,
         allowedPeers: Set<PeerCategory> = defaultAllowedPeers,
-        authEnabled: Bool = true
+        authEnabled: Bool = true,
+        terminal: Terminal = defaultTerminal
     ) {
         self.paths = paths
         self.commands = commands
+        self.rawCommands = rawCommands
         self.port = port
         self.allowedPeers = allowedPeers
         self.authEnabled = authEnabled
+        self.terminal = terminal
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         paths = try container.decodeIfPresent([String].self, forKey: .paths) ?? []
         commands = try container.decodeIfPresent([String].self, forKey: .commands) ?? []
+        rawCommands = try container.decodeIfPresent([String].self, forKey: .rawCommands) ?? []
         port = try container.decodeIfPresent(UInt16.self, forKey: .port) ?? Self.defaultPort
         allowedPeers = try container.decodeIfPresent(Set<PeerCategory>.self, forKey: .allowedPeers)
             ?? Self.defaultAllowedPeers
         authEnabled = try container.decodeIfPresent(Bool.self, forKey: .authEnabled) ?? true
+        terminal = try container.decodeIfPresent(Terminal.self, forKey: .terminal) ?? Self.defaultTerminal
     }
 }
 
