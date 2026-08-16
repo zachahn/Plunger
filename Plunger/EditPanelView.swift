@@ -274,7 +274,7 @@ private struct PathsColumn: View {
                         .truncationMode(.head)
                 }
                 TableColumn("Launches") { row in
-                    Text(store.isParentPath(row.value) ? "Folders inside" : "This folder")
+                    Text(store.launchesFoldersInside(row.value) ? "Folders inside" : "This folder")
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -303,13 +303,13 @@ private struct PathsColumn: View {
         .sheet(item: $sheet) { sheet in
             switch sheet {
             case .add:
-                PathForm(title: "New Path") { store.addPath($0, isParent: $1) }
+                PathForm(title: "New Path") { store.addPath($0, launchFoldersInside: $1) }
             case .edit(let value):
                 PathForm(
                     title: "Edit Path",
                     initialPath: value,
-                    initialIsParent: store.isParentPath(value)
-                ) { store.updatePath(value, to: $0, isParent: $1) }
+                    initialLaunchFoldersInside: store.launchesFoldersInside(value)
+                ) { store.updatePath(value, to: $0, launchFoldersInside: $1) }
             }
         }
         .alert(
@@ -331,25 +331,25 @@ private struct PathsColumn: View {
 private struct PathForm: View {
     let title: String
     var initialPath: String = ""
-    var initialIsParent: Bool = false
+    var initialLaunchFoldersInside: Bool = false
     let onSave: (String, Bool) -> Void
 
     @State private var path: String
-    @State private var isParent: Bool
+    @State private var launchFoldersInside: Bool
     @Environment(\.dismiss) private var dismiss
 
     init(
         title: String,
         initialPath: String = "",
-        initialIsParent: Bool = false,
+        initialLaunchFoldersInside: Bool = false,
         onSave: @escaping (String, Bool) -> Void
     ) {
         self.title = title
         self.initialPath = initialPath
-        self.initialIsParent = initialIsParent
+        self.initialLaunchFoldersInside = initialLaunchFoldersInside
         self.onSave = onSave
         _path = State(initialValue: initialPath)
-        _isParent = State(initialValue: initialIsParent)
+        _launchFoldersInside = State(initialValue: initialLaunchFoldersInside)
     }
 
     var body: some View {
@@ -369,8 +369,8 @@ private struct PathForm: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Toggle("Parent directory", isOn: $isParent)
-                Text("Launch in each folder inside this directory instead of the directory itself.")
+                Toggle("Launch folders inside", isOn: $launchFoldersInside)
+                Text("Offer each folder inside this directory instead of the directory itself.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -380,7 +380,7 @@ private struct PathForm: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Save") {
-                    onSave(path, isParent)
+                    onSave(path, launchFoldersInside)
                     dismiss()
                 }
                 .disabled(path.isEmpty)

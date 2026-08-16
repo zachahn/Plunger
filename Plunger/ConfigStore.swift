@@ -50,7 +50,10 @@ final class ConfigStore {
     // MARK: - Read-only queries
 
     var launchablePaths: [String] {
-        PathExpansion.launchable(paths: config.paths, parents: config.parentPaths)
+        PathExpansion.launchable(
+            paths: config.paths,
+            launchFoldersInside: config.launchFoldersInside
+        )
     }
 
     /// Reports whether `path` is one of the saved paths.
@@ -58,8 +61,8 @@ final class ConfigStore {
         launchablePaths.contains(path)
     }
 
-    func isParentPath(_ path: String) -> Bool {
-        config.parentPaths.contains(path)
+    func launchesFoldersInside(_ path: String) -> Bool {
+        config.launchFoldersInside.contains(path)
     }
 
     /// Reports whether `command` is one of the saved commands.
@@ -93,9 +96,9 @@ final class ConfigStore {
 
     // MARK: - Mutations
 
-    func addPath(_ path: String, isParent: Bool = false) {
+    func addPath(_ path: String, launchFoldersInside: Bool = false) {
         config.paths.appendUnique(path)
-        setParent(path, isParent)
+        setLaunchFoldersInside(path, launchFoldersInside)
         save()
     }
 
@@ -112,20 +115,20 @@ final class ConfigStore {
     /// Rewrites `path` to `newPath` in place, preserving its position. A no-op
     /// when `path` isn't saved, `newPath` is blank, or `newPath` is already
     /// saved.
-    func updatePath(_ path: String, to newPath: String, isParent: Bool) {
+    func updatePath(_ path: String, to newPath: String, launchFoldersInside: Bool) {
         guard !newPath.isEmpty, newPath == path || !config.paths.contains(newPath) else { return }
         guard let index = config.paths.firstIndex(of: path) else { return }
         config.paths[index] = newPath
-        config.parentPaths.remove(path)
-        setParent(newPath, isParent)
+        config.launchFoldersInside.remove(path)
+        setLaunchFoldersInside(newPath, launchFoldersInside)
         save()
     }
 
-    private func setParent(_ path: String, _ isParent: Bool) {
-        if isParent {
-            config.parentPaths.insert(path)
+    private func setLaunchFoldersInside(_ path: String, _ enabled: Bool) {
+        if enabled {
+            config.launchFoldersInside.insert(path)
         } else {
-            config.parentPaths.remove(path)
+            config.launchFoldersInside.remove(path)
         }
     }
 
@@ -141,7 +144,7 @@ final class ConfigStore {
 
     func deletePath(_ path: String) {
         config.paths.removeAll { $0 == path }
-        config.parentPaths.remove(path)
+        config.launchFoldersInside.remove(path)
         save()
     }
 

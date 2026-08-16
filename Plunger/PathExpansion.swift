@@ -1,14 +1,14 @@
 import Foundation
 
 enum PathExpansion {
-    static func childDirectories(of path: String, fileManager: FileManager = .default) -> [String] {
+    static func foldersInside(_ path: String, fileManager: FileManager = .default) -> [String] {
         guard let names = try? fileManager.contentsOfDirectory(atPath: path) else { return [] }
         return names
             .filter { !$0.hasPrefix(".") }
             .map { (path as NSString).appendingPathComponent($0) }
-            .filter { child in
+            .filter { folder in
                 var isDirectory: ObjCBool = false
-                let exists = fileManager.fileExists(atPath: child, isDirectory: &isDirectory)
+                let exists = fileManager.fileExists(atPath: folder, isDirectory: &isDirectory)
                 return exists && isDirectory.boolValue
             }
             .sortedForDisplay()
@@ -16,13 +16,13 @@ enum PathExpansion {
 
     static func launchable(
         paths: [String],
-        parents: Set<String>,
-        children: (String) -> [String] = { childDirectories(of: $0) }
+        launchFoldersInside: Set<String>,
+        folders: (String) -> [String] = { foldersInside($0) }
     ) -> [String] {
         var result: [String] = []
         for path in paths {
-            if parents.contains(path) {
-                for child in children(path) { result.appendUnique(child) }
+            if launchFoldersInside.contains(path) {
+                for folder in folders(path) { result.appendUnique(folder) }
             } else {
                 result.appendUnique(path)
             }

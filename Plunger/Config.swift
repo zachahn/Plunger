@@ -47,7 +47,7 @@ struct Config: Codable {
 
     var paths: [String] = []
 
-    var parentPaths: Set<String> = []
+    var launchFoldersInside: Set<String> = []
 
     var commands: [String] = []
 
@@ -73,12 +73,12 @@ struct Config: Codable {
     var authEnabled: Bool = true
 
     enum CodingKeys: String, CodingKey {
-        case paths, parentPaths, commands, rawCommands, port, allowedPeers, authEnabled, terminal
+        case paths, launchFoldersInside, commands, rawCommands, port, allowedPeers, authEnabled, terminal
     }
 
     init(
         paths: [String] = [],
-        parentPaths: Set<String> = [],
+        launchFoldersInside: Set<String> = [],
         commands: [String] = [],
         rawCommands: [String] = [],
         port: UInt16 = defaultPort,
@@ -87,7 +87,7 @@ struct Config: Codable {
         terminal: Terminal = defaultTerminal
     ) {
         self.paths = paths
-        self.parentPaths = parentPaths
+        self.launchFoldersInside = launchFoldersInside
         self.commands = commands
         self.rawCommands = rawCommands
         self.port = port
@@ -99,7 +99,7 @@ struct Config: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         paths = try container.decodeIfPresent([String].self, forKey: .paths) ?? []
-        parentPaths = try container.decodeIfPresent(Set<String>.self, forKey: .parentPaths) ?? []
+        launchFoldersInside = try container.decodeIfPresent(Set<String>.self, forKey: .launchFoldersInside) ?? []
         commands = try container.decodeIfPresent([String].self, forKey: .commands) ?? []
         rawCommands = try container.decodeIfPresent([String].self, forKey: .rawCommands) ?? []
         port = try container.decodeIfPresent(UInt16.self, forKey: .port) ?? Self.defaultPort

@@ -19,8 +19,8 @@ struct MenuContent: View {
     var body: some View {
         ForEach(store.config.paths.sortedForDisplay(), id: \.self) { path in
             Menu(displayPath(path)) {
-                if store.isParentPath(path) {
-                    ChildPaths(store: store, parent: path)
+                if store.launchesFoldersInside(path) {
+                    FoldersInside(store: store, path: path)
                 } else {
                     CommandLauncher(store: store, path: path)
                 }
@@ -64,18 +64,18 @@ private struct CheckForUpdatesButton: View {
     }
 }
 
-private struct ChildPaths: View {
+private struct FoldersInside: View {
     @Bindable var store: ConfigStore
-    let parent: String
+    let path: String
 
     var body: some View {
-        let children = PathExpansion.childDirectories(of: parent)
-        if children.isEmpty {
+        let folders = PathExpansion.foldersInside(path)
+        if folders.isEmpty {
             Text("(no folders inside)")
         } else {
-            ForEach(children, id: \.self) { child in
-                Menu((child as NSString).lastPathComponent) {
-                    CommandLauncher(store: store, path: child)
+            ForEach(folders, id: \.self) { folder in
+                Menu((folder as NSString).lastPathComponent) {
+                    CommandLauncher(store: store, path: folder)
                 }
             }
         }

@@ -440,58 +440,58 @@ struct PathExpansionTests {
         return root.path
     }
 
-    @Test func listsDirectChildDirectoriesSorted() throws {
+    @Test func listsFoldersInsideSorted() throws {
         let root = try makeTree(["beta/", "Alpha/", "notes.txt"])
-        let children = PathExpansion.childDirectories(of: root)
-        #expect(children == [root + "/Alpha", root + "/beta"])
+        let folders = PathExpansion.foldersInside(root)
+        #expect(folders == [root + "/Alpha", root + "/beta"])
     }
 
     @Test func skipsHiddenEntries() throws {
         let root = try makeTree([".git/", "src/"])
-        #expect(PathExpansion.childDirectories(of: root) == [root + "/src"])
+        #expect(PathExpansion.foldersInside(root) == [root + "/src"])
     }
 
     @Test func onlyGoesOneLevelDeep() throws {
         let root = try makeTree(["outer/", "outer/inner/"])
-        #expect(PathExpansion.childDirectories(of: root) == [root + "/outer"])
+        #expect(PathExpansion.foldersInside(root) == [root + "/outer"])
     }
 
-    @Test func missingDirectoryHasNoChildren() {
-        #expect(PathExpansion.childDirectories(of: "/nope/does/not/exist").isEmpty)
+    @Test func missingDirectoryHasNoFolders() {
+        #expect(PathExpansion.foldersInside("/nope/does/not/exist").isEmpty)
     }
 
     @Test func plainPathStandsForItself() {
         let launchable = PathExpansion.launchable(
             paths: ["/work"],
-            parents: [],
-            children: { _ in ["/work/a"] }
+            launchFoldersInside: [],
+            folders: { _ in ["/work/a"] }
         )
         #expect(launchable == ["/work"])
     }
 
-    @Test func parentPathIsReplacedByItsChildren() {
+    @Test func pathIsReplacedByTheFoldersInsideIt() {
         let launchable = PathExpansion.launchable(
             paths: ["/work", "/solo"],
-            parents: ["/work"],
-            children: { _ in ["/work/a", "/work/b"] }
+            launchFoldersInside: ["/work"],
+            folders: { _ in ["/work/a", "/work/b"] }
         )
         #expect(launchable == ["/work/a", "/work/b", "/solo"])
     }
 
-    @Test func parentWithNoChildrenContributesNothing() {
+    @Test func pathWithNoFoldersInsideContributesNothing() {
         let launchable = PathExpansion.launchable(
             paths: ["/work"],
-            parents: ["/work"],
-            children: { _ in [] }
+            launchFoldersInside: ["/work"],
+            folders: { _ in [] }
         )
         #expect(launchable.isEmpty)
     }
 
-    @Test func childAlsoSavedOnItsOwnAppearsOnce() {
+    @Test func folderAlsoSavedOnItsOwnAppearsOnce() {
         let launchable = PathExpansion.launchable(
             paths: ["/work", "/work/a"],
-            parents: ["/work"],
-            children: { _ in ["/work/a"] }
+            launchFoldersInside: ["/work"],
+            folders: { _ in ["/work/a"] }
         )
         #expect(launchable == ["/work/a"])
     }
