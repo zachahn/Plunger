@@ -1,3 +1,14 @@
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
+
+.flash {
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid seagreen;
+  background: color-mix(in srgb, seagreen 12%, transparent);
+}
+
+.flash.error {
+  border-left-color: crimson;
+  background: color-mix(in srgb, crimson 12%, transparent);
+}

@@ -301,6 +301,11 @@ struct RouterTests {
         #expect(outcome == .respond(.methodNotAllowed))
     }
 
+    @Test func wrongMethodOnRootIsMethodNotAllowed() {
+        let outcome = Router.route(request(method: "DELETE", target: "/"), store: storeView())
+        #expect(outcome == .respond(.methodNotAllowed))
+    }
+
     @Test func unknownRouteIsNotFound() {
         let outcome = Router.route(request(method: "GET", target: "/nope"), store: storeView())
         #expect(outcome == .respond(.notFound))
@@ -360,9 +365,21 @@ struct RouterTests {
         #expect(response.body.contains("No saved paths or commands"))
     }
 
-    @Test func formLaunchYieldsHTMLSuccess() {
+    @Test func formPostsToRoot() {
         let outcome = Router.route(
-            request(method: "POST", target: "/launch", token: token,
+            request(method: "GET", target: "/", token: token),
+            store: storeView()
+        )
+        guard case let .respond(response) = outcome else {
+            Issue.record("expected a response outcome")
+            return
+        }
+        #expect(response.body.contains(#"action="/""#))
+    }
+
+    @Test func formLaunchRedisplaysTheFormWithAFlash() {
+        let outcome = Router.route(
+            request(method: "POST", target: "/", token: token,
                     contentType: "application/x-www-form-urlencoded",
                     body: "path=%2Fwork&command=%2Fbin%2Fzsh"),
             store: storeView()
@@ -374,12 +391,13 @@ struct RouterTests {
         #expect(path == "/work")
         #expect(command == "/bin/zsh")
         #expect(success.contentType.hasPrefix("text/html"))
-        #expect(success.body.contains("Launched"))
+        #expect(success.body.contains(#"<p class="flash">Launched"#))
+        #expect(success.body.contains(#"<option value="/work">"#))
     }
 
     @Test func formLaunchWithoutAuthChallenges() {
         let outcome = Router.route(
-            request(method: "POST", target: "/launch",
+            request(method: "POST", target: "/",
                     contentType: "application/x-www-form-urlencoded",
                     body: "path=%2Fwork&command=%2Fbin%2Fzsh"),
             store: storeView()
@@ -391,9 +409,9 @@ struct RouterTests {
         #expect(response.status == 401)
     }
 
-    @Test func formLaunchWithUnknownPathShowsHTML() {
+    @Test func formLaunchWithUnknownPathRedisplaysTheFormWithAnError() {
         let outcome = Router.route(
-            request(method: "POST", target: "/launch", token: token,
+            request(method: "POST", target: "/", token: token,
                     contentType: "application/x-www-form-urlencoded",
                     body: "path=%2Fmissing&command=%2Fbin%2Fzsh"),
             store: storeView()
@@ -404,6 +422,23 @@ struct RouterTests {
         }
         #expect(response.status == 404)
         #expect(response.contentType.hasPrefix("text/html"))
+        #expect(response.body.contains(#"<p class="flash error">"#))
+        #expect(response.body.contains(#"<option value="/work">"#))
+    }
+
+    @Test func flashEscapesTheLaunchedPair() {
+        let outcome = Router.route(
+            request(method: "POST", target: "/", token: token,
+                    contentType: "application/x-www-form-urlencoded",
+                    body: "path=%2Fa%26%3Cb%3E&command=c%22d"),
+            store: storeView(paths: ["/a&<b>"], commands: ["c\"d"])
+        )
+        guard case let .launch(_, _, _, success) = outcome else {
+            Issue.record("expected a launch outcome")
+            return
+        }
+        #expect(success.body.contains("/a&amp;&lt;b&gt;"))
+        #expect(!success.body.contains("<b>"))
     }
 }
 

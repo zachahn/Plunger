@@ -21,6 +21,7 @@
 //
 //  Routes (one request per connection, no keep-alive):
 //    GET  /          -> 200 text/html (the launch form)       (auth, 401 challenge)
+//    POST /          -> launches, then re-renders the form with a flash (auth)
 //    GET  /style.css -> 200 text/css                          (no auth)
 //    GET  /health    -> 200 {"ok":true}                       (no auth)
 //    GET  /paths     -> 200 {"paths":[...],"commands":[...]}   (auth, 403)
@@ -204,11 +205,10 @@ enum Router {
         switch (request.method, request.target) {
         case ("GET", "/"):
             guard authorized(request, store: store) else { return .respond(.unauthorized) }
-            return .respond(.html(HTMLPage.form(
-                paths: store.paths,
-                commands: store.commands,
-                rawCommands: store.rawCommands
-            )))
+            return .respond(.html(formPage(store)))
+
+        case ("POST", "/"):
+            return launch(request, store: store)
 
         case ("GET", "/style.css"):
             return .respond(.css(HTMLPage.stylesheet))
@@ -298,11 +298,15 @@ enum Router {
         }
         let isRaw = store.hasRawCommand(parsed.command)
         guard store.hasPath(parsed.path), store.hasCommand(parsed.command) || isRaw else {
-            return .respond(isForm ? .html(HTMLPage.unknown, status: 404, reason: "Not Found") : .notFound)
+            guard isForm else { return .respond(.notFound) }
+            return .respond(.html(formPage(store, flash: .unknown), status: 404, reason: "Not Found"))
         }
 
         let success = isForm
-            ? HTTPResponse.html(HTMLPage.launched(path: parsed.path, command: parsed.command))
+            ? HTTPResponse.html(formPage(
+                store,
+                flash: .launched(path: parsed.path, command: parsed.command)
+            ))
             : HTTPResponse.launched
         if isRaw {
             let rendered = Interpolation.render(
@@ -312,6 +316,15 @@ enum Router {
             return .launchRaw(path: parsed.path, command: rendered, success: success)
         }
         return .launch(path: parsed.path, command: parsed.command, terminal: store.terminal, success: success)
+    }
+
+    private static func formPage(_ store: Router.StoreView, flash: HTMLPage.Flash? = nil) -> String {
+        HTMLPage.form(
+            paths: store.paths,
+            commands: store.commands,
+            rawCommands: store.rawCommands,
+            flash: flash
+        )
     }
 
     /// Reads (path, command) from the body in whichever encoding the request used.
@@ -385,13 +398,26 @@ enum Template {
 /// launch. Markup lives in Resources/*.html, rendered via `Template`; styled
 /// via a linked stylesheet at /style.css; no JavaScript.
 enum HTMLPage {
+    enum Flash: Equatable {
+        case launched(path: String, command: String)
+        case unknown
+
+        var markup: String {
+            switch self {
+            case let .launched(path, command):
+                "<p class=\"flash\">Launched <code>\(escape(command))</code> in <code>\(escape(displayPath(path)))</code>.</p>"
+            case .unknown:
+                "<p class=\"flash error\">That path or command is no longer saved.</p>"
+            }
+        }
+    }
+
     /// Served at GET /style.css.
     static let stylesheet = Template.load("style.css")
 
     /// Page templates, read from the bundle once at first use rather than per
     /// request.
     private static let formTemplate = Template.load("form.html")
-    private static let launchedTemplate = Template.load("launched.html")
 
     /// HTML-escapes text interpolated into markup or an attribute value.
     static func escape(_ text: String) -> String {
@@ -401,11 +427,17 @@ enum HTMLPage {
             .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
-    /// The launch form: two dropdowns posting to /launch. Regular commands open a
+    /// The launch form: two dropdowns posting back to /. Regular commands open a
     /// terminal; raw commands run directly. The two kinds are split into separate
     /// `<optgroup>` sections. An empty list renders an empty select plus a note
-    /// pointing to the menu bar.
-    static func form(paths: [String], commands: [String], rawCommands: [String]) -> String {
+    /// pointing to the menu bar. A submit re-renders this page with `flash`
+    /// reporting what happened.
+    static func form(
+        paths: [String],
+        commands: [String],
+        rawCommands: [String],
+        flash: Flash? = nil
+    ) -> String {
         let hasAnyCommand = !commands.isEmpty || !rawCommands.isEmpty
         let note = (paths.isEmpty || !hasAnyCommand)
             ? "<p>No saved paths or commands yet — add them from the menu bar.</p>"
@@ -415,22 +447,12 @@ enum HTMLPage {
             + optgroup("Raw commands", options(rawCommands.sortedForDisplay(), label: { $0 }))
 
         return Template.render(formTemplate, [
+            "flash": flash?.markup ?? "",
             "note": note,
             "path_options": options(paths.sortedForDisplay(), label: displayPath),
             "command_options": commandOptions,
         ])
     }
-
-    /// The success page after a launch.
-    static func launched(path: String, command: String) -> String {
-        Template.render(launchedTemplate, [
-            "command": escape(command),
-            "path": escape(displayPath(path)),
-        ])
-    }
-
-    /// The page shown when the submitted path or command is no longer saved.
-    static let unknown = Template.load("unknown.html")
 
     /// The body of the 401 challenge, shown before the browser's login prompt.
     static let unauthorized = Template.load("unauthorized.html")
