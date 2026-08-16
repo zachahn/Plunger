@@ -421,6 +421,82 @@ struct SortedForDisplayTests {
     }
 }
 
+// MARK: - Path expansion
+
+@Suite("PathExpansion")
+struct PathExpansionTests {
+    private func makeTree(_ entries: [String]) throws -> String {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("plunger-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for entry in entries {
+            let url = root.appendingPathComponent(entry)
+            if entry.hasSuffix("/") {
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            } else {
+                try Data().write(to: url)
+            }
+        }
+        return root.path
+    }
+
+    @Test func listsDirectChildDirectoriesSorted() throws {
+        let root = try makeTree(["beta/", "Alpha/", "notes.txt"])
+        let children = PathExpansion.childDirectories(of: root)
+        #expect(children == [root + "/Alpha", root + "/beta"])
+    }
+
+    @Test func skipsHiddenEntries() throws {
+        let root = try makeTree([".git/", "src/"])
+        #expect(PathExpansion.childDirectories(of: root) == [root + "/src"])
+    }
+
+    @Test func onlyGoesOneLevelDeep() throws {
+        let root = try makeTree(["outer/", "outer/inner/"])
+        #expect(PathExpansion.childDirectories(of: root) == [root + "/outer"])
+    }
+
+    @Test func missingDirectoryHasNoChildren() {
+        #expect(PathExpansion.childDirectories(of: "/nope/does/not/exist").isEmpty)
+    }
+
+    @Test func plainPathStandsForItself() {
+        let launchable = PathExpansion.launchable(
+            paths: ["/work"],
+            parents: [],
+            children: { _ in ["/work/a"] }
+        )
+        #expect(launchable == ["/work"])
+    }
+
+    @Test func parentPathIsReplacedByItsChildren() {
+        let launchable = PathExpansion.launchable(
+            paths: ["/work", "/solo"],
+            parents: ["/work"],
+            children: { _ in ["/work/a", "/work/b"] }
+        )
+        #expect(launchable == ["/work/a", "/work/b", "/solo"])
+    }
+
+    @Test func parentWithNoChildrenContributesNothing() {
+        let launchable = PathExpansion.launchable(
+            paths: ["/work"],
+            parents: ["/work"],
+            children: { _ in [] }
+        )
+        #expect(launchable.isEmpty)
+    }
+
+    @Test func childAlsoSavedOnItsOwnAppearsOnce() {
+        let launchable = PathExpansion.launchable(
+            paths: ["/work", "/work/a"],
+            parents: ["/work"],
+            children: { _ in ["/work/a"] }
+        )
+        #expect(launchable == ["/work/a"])
+    }
+}
+
 // MARK: - Form decoding
 
 struct FormDecoderTests {

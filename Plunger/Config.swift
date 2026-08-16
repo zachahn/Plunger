@@ -46,6 +46,9 @@ struct Config: Codable {
     static let defaultTerminal: Terminal = .ghostty
 
     var paths: [String] = []
+
+    var parentPaths: Set<String> = []
+
     var commands: [String] = []
 
     /// Commands that run directly (no terminal window) with `{{path}}` and
@@ -70,11 +73,12 @@ struct Config: Codable {
     var authEnabled: Bool = true
 
     enum CodingKeys: String, CodingKey {
-        case paths, commands, rawCommands, port, allowedPeers, authEnabled, terminal
+        case paths, parentPaths, commands, rawCommands, port, allowedPeers, authEnabled, terminal
     }
 
     init(
         paths: [String] = [],
+        parentPaths: Set<String> = [],
         commands: [String] = [],
         rawCommands: [String] = [],
         port: UInt16 = defaultPort,
@@ -83,6 +87,7 @@ struct Config: Codable {
         terminal: Terminal = defaultTerminal
     ) {
         self.paths = paths
+        self.parentPaths = parentPaths
         self.commands = commands
         self.rawCommands = rawCommands
         self.port = port
@@ -94,6 +99,7 @@ struct Config: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         paths = try container.decodeIfPresent([String].self, forKey: .paths) ?? []
+        parentPaths = try container.decodeIfPresent(Set<String>.self, forKey: .parentPaths) ?? []
         commands = try container.decodeIfPresent([String].self, forKey: .commands) ?? []
         rawCommands = try container.decodeIfPresent([String].self, forKey: .rawCommands) ?? []
         port = try container.decodeIfPresent(UInt16.self, forKey: .port) ?? Self.defaultPort

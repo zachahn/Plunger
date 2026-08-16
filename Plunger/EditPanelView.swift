@@ -273,6 +273,12 @@ private struct PathsColumn: View {
                         .lineLimit(1)
                         .truncationMode(.head)
                 }
+                TableColumn("Launches") { row in
+                    Text(store.isParentPath(row.value) ? "Folders inside" : "This folder")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .width(min: 100, ideal: 110)
             } rows: {
                 ForEach(store.config.paths.sortedForDisplay().asRows()) { row in
                     TableRow(row)
@@ -297,9 +303,13 @@ private struct PathsColumn: View {
         .sheet(item: $sheet) { sheet in
             switch sheet {
             case .add:
-                PathForm(title: "New Path") { store.addPath($0) }
+                PathForm(title: "New Path") { store.addPath($0, isParent: $1) }
             case .edit(let value):
-                PathForm(title: "Edit Path", initialPath: value) { store.updatePath(value, to: $0) }
+                PathForm(
+                    title: "Edit Path",
+                    initialPath: value,
+                    initialIsParent: store.isParentPath(value)
+                ) { store.updatePath(value, to: $0, isParent: $1) }
             }
         }
         .alert(
@@ -321,16 +331,25 @@ private struct PathsColumn: View {
 private struct PathForm: View {
     let title: String
     var initialPath: String = ""
-    let onSave: (String) -> Void
+    var initialIsParent: Bool = false
+    let onSave: (String, Bool) -> Void
 
     @State private var path: String
+    @State private var isParent: Bool
     @Environment(\.dismiss) private var dismiss
 
-    init(title: String, initialPath: String = "", onSave: @escaping (String) -> Void) {
+    init(
+        title: String,
+        initialPath: String = "",
+        initialIsParent: Bool = false,
+        onSave: @escaping (String, Bool) -> Void
+    ) {
         self.title = title
         self.initialPath = initialPath
+        self.initialIsParent = initialIsParent
         self.onSave = onSave
         _path = State(initialValue: initialPath)
+        _isParent = State(initialValue: initialIsParent)
     }
 
     var body: some View {
@@ -349,12 +368,19 @@ private struct PathForm: View {
                 .truncationMode(.head)
             }
 
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Parent directory", isOn: $isParent)
+                Text("Launch in each folder inside this directory instead of the directory itself.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Save") {
-                    onSave(path)
+                    onSave(path, isParent)
                     dismiss()
                 }
                 .disabled(path.isEmpty)

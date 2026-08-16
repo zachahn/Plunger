@@ -49,9 +49,17 @@ final class ConfigStore {
 
     // MARK: - Read-only queries
 
+    var launchablePaths: [String] {
+        PathExpansion.launchable(paths: config.paths, parents: config.parentPaths)
+    }
+
     /// Reports whether `path` is one of the saved paths.
     func hasPath(_ path: String) -> Bool {
-        config.paths.contains(path)
+        launchablePaths.contains(path)
+    }
+
+    func isParentPath(_ path: String) -> Bool {
+        config.parentPaths.contains(path)
     }
 
     /// Reports whether `command` is one of the saved commands.
@@ -85,8 +93,9 @@ final class ConfigStore {
 
     // MARK: - Mutations
 
-    func addPath(_ path: String) {
+    func addPath(_ path: String, isParent: Bool = false) {
         config.paths.appendUnique(path)
+        setParent(path, isParent)
         save()
     }
 
@@ -103,11 +112,21 @@ final class ConfigStore {
     /// Rewrites `path` to `newPath` in place, preserving its position. A no-op
     /// when `path` isn't saved, `newPath` is blank, or `newPath` is already
     /// saved.
-    func updatePath(_ path: String, to newPath: String) {
+    func updatePath(_ path: String, to newPath: String, isParent: Bool) {
         guard !newPath.isEmpty, newPath == path || !config.paths.contains(newPath) else { return }
         guard let index = config.paths.firstIndex(of: path) else { return }
         config.paths[index] = newPath
+        config.parentPaths.remove(path)
+        setParent(newPath, isParent)
         save()
+    }
+
+    private func setParent(_ path: String, _ isParent: Bool) {
+        if isParent {
+            config.parentPaths.insert(path)
+        } else {
+            config.parentPaths.remove(path)
+        }
     }
 
     /// Rewrites `command` to `newCommand` in place, preserving its position.
@@ -122,6 +141,7 @@ final class ConfigStore {
 
     func deletePath(_ path: String) {
         config.paths.removeAll { $0 == path }
+        config.parentPaths.remove(path)
         save()
     }
 

@@ -494,7 +494,7 @@ final class HTTPServer {
             Router.StoreView(
                 token: store.token,
                 authEnabled: store.config.authEnabled,
-                paths: store.config.paths,
+                paths: store.launchablePaths,
                 commands: store.config.commands,
                 rawCommands: store.config.rawCommands,
                 terminal: store.config.terminal,
