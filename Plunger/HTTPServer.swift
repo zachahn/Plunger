@@ -2,12 +2,13 @@
 //  HTTPServer.swift
 //  Plunger
 //
-//  A dependency-free HTTP/1.1 server that drives launches programmatically. It
-//  is strictly launch-only: it exposes read-only views of the saved lists plus
+//  A dependency-free HTTP/1.1 server that serves one page: a form listing the
+//  saved paths and commands, posting back to itself to launch. It is strictly
+//  launch-only: it exposes read-only views of the saved lists plus
 //  Launcher.launch, and reaches no mutation method on the store. The listener
 //  binds every interface (0.0.0.0) on the configured port (default 54175; dev
 //  builds always bind 54176, ignoring the stored port), so
-//  the launch API is reachable from the LAN. Two guards sit in front: a peer
+//  the form is reachable from the LAN. Two guards sit in front: a peer
 //  filter (see PeerFilter) drops any connection whose source IP is not in an
 //  allowed network — loopback, Tailscale (100.64.0.0/10), LAN, or any — and the
 //  bearer token guards every authed route on top. The token travels over
@@ -16,16 +17,14 @@
 //  relaunching; network changes take effect on the next connection.
 //
 //  Auth is HTTP Basic with the fixed username "plunger" and the generated token
-//  as the password, so a browser prompts once and caches it. The bearer path is
-//  kept for API clients but now carries the username too, as "plunger:<token>".
+//  as the password, so a browser prompts once and caches it. A "Bearer
+//  plunger:<token>" header is accepted too.
 //
 //  Routes (one request per connection, no keep-alive):
-//    GET  /          -> 200 text/html (the launch form)       (auth, 401 challenge)
-//    POST /          -> launches, then re-renders the form with a flash (auth)
-//    GET  /style.css -> 200 text/css                          (no auth)
-//    GET  /health    -> 200 {"ok":true}                       (no auth)
-//    GET  /paths     -> 200 {"paths":[...],"commands":[...]}   (auth, 403)
-//    POST /launch    -> launches; JSON or form-encoded body    (auth)
+//    GET  /          -> 200 text/html (the launch form)      (auth, 401 challenge)
+//    POST /          -> launches, then serves the form with a flash (auth)
+//    GET  /style.css -> 200 text/css                         (no auth)
+//    GET  /health    -> 200 ok                               (no auth)
 //
 
 import Foundation
@@ -118,7 +117,7 @@ enum HTTPRequestParser {
 struct HTTPResponse: Equatable {
     var status: Int
     var reason: String
-    var contentType: String = "application/json"
+    var contentType: String = "text/plain; charset=utf-8"
     var body: String
     var headers: [String: String] = [:]
 
@@ -144,12 +143,10 @@ struct HTTPResponse: Equatable {
         HTTPResponse(status: status, reason: reason, contentType: "text/css; charset=utf-8", body: source)
     }
 
-    static let ok = HTTPResponse(status: 200, reason: "OK", body: #"{"ok":true}"#)
-    static let launched = HTTPResponse(status: 200, reason: "OK", body: #"{"launched":true}"#)
-    static let badRequest = HTTPResponse(status: 400, reason: "Bad Request", body: #"{"error":"bad request"}"#)
-    static let forbidden = HTTPResponse(status: 403, reason: "Forbidden", body: #"{"error":"forbidden"}"#)
-    static let notFound = HTTPResponse(status: 404, reason: "Not Found", body: #"{"error":"not found"}"#)
-    static let methodNotAllowed = HTTPResponse(status: 405, reason: "Method Not Allowed", body: #"{"error":"method not allowed"}"#)
+    static let ok = HTTPResponse(status: 200, reason: "OK", body: "ok")
+    static let badRequest = HTTPResponse(status: 400, reason: "Bad Request", body: "bad request")
+    static let notFound = HTTPResponse(status: 404, reason: "Not Found", body: "not found")
+    static let methodNotAllowed = HTTPResponse(status: 405, reason: "Method Not Allowed", body: "method not allowed")
 
     /// A 401 that makes the browser show its Basic-auth login prompt.
     static let unauthorized = HTTPResponse(
@@ -163,16 +160,9 @@ struct HTTPResponse: Equatable {
 
 // MARK: - Routing
 
-/// The body of a /launch request.
-private struct LaunchBody: Decodable {
-    var path: String
-    var command: String
-}
-
-/// What the router decided a valid /launch request should do. The router stops
+/// What the router decided a valid launch request should do. The router stops
 /// here so its decisions are testable without spawning Ghostty. `launch` carries
-/// the success response to send afterward, so a form submit gets HTML and a JSON
-/// client gets JSON.
+/// the page to send afterward, so the browser gets the form back with a flash.
 enum RouteOutcome: Equatable {
     case respond(HTTPResponse)
     /// A terminal launch: open `command` in `terminal` at `path`.
@@ -216,17 +206,7 @@ enum Router {
         case ("GET", "/health"):
             return .respond(.ok)
 
-        case ("GET", "/paths"):
-            guard authorized(request, store: store) else { return .respond(.forbidden) }
-            return .respond(pathsResponse(store))
-
-        case ("POST", "/launch"):
-            return launch(request, store: store)
-
-        case (_, "/"):
-            return .respond(.methodNotAllowed)
-
-        case (_, "/style.css"), (_, "/health"), (_, "/paths"), (_, "/launch"):
+        case (_, "/"), (_, "/style.css"), (_, "/health"):
             return .respond(.methodNotAllowed)
 
         default:
@@ -271,51 +251,25 @@ enum Router {
         return diff == 0
     }
 
-    private static func pathsResponse(_ store: Router.StoreView) -> HTTPResponse {
-        let payload = ["paths": store.paths.sortedForDisplay(), "commands": store.commands.sortedForDisplay()]
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .withoutEscapingSlashes
-        guard let data = try? encoder.encode(payload),
-              let json = String(data: data, encoding: .utf8) else {
-            return HTTPResponse(status: 500, reason: "Internal Server Error", body: #"{"error":"encode failed"}"#)
-        }
-        return HTTPResponse(status: 200, reason: "OK", body: json)
-    }
-
-    /// Decodes a launch from JSON or a form-encoded body. A form submit comes from
-    /// the HTML page, so it gets a 401 challenge when unauthorized and an HTML
-    /// result on success; a JSON client gets 403 and JSON.
     private static func launch(_ request: HTTPRequest, store: Router.StoreView) -> RouteOutcome {
-        let isForm = (request.headers["content-type"] ?? "")
-            .hasPrefix("application/x-www-form-urlencoded")
+        guard authorized(request, store: store) else { return .respond(.unauthorized) }
 
-        guard authorized(request, store: store) else {
-            return .respond(isForm ? .unauthorized : .forbidden)
-        }
-
-        guard let parsed = parse(request, isForm: isForm) else {
+        let fields = FormDecoder.decode(request.body)
+        guard let path = fields["path"], let command = fields["command"] else {
             return .respond(.badRequest)
         }
-        let isRaw = store.hasRawCommand(parsed.command)
-        guard store.hasPath(parsed.path), store.hasCommand(parsed.command) || isRaw else {
-            guard isForm else { return .respond(.notFound) }
+
+        let isRaw = store.hasRawCommand(command)
+        guard store.hasPath(path), store.hasCommand(command) || isRaw else {
             return .respond(.html(formPage(store, flash: .unknown), status: 404, reason: "Not Found"))
         }
 
-        let success = isForm
-            ? HTTPResponse.html(formPage(
-                store,
-                flash: .launched(path: parsed.path, command: parsed.command)
-            ))
-            : HTTPResponse.launched
+        let success = HTTPResponse.html(formPage(store, flash: .launched(path: path, command: command)))
         if isRaw {
-            let rendered = Interpolation.render(
-                parsed.command,
-                values: ["path": parsed.path, "command": parsed.command]
-            )
-            return .launchRaw(path: parsed.path, command: rendered, success: success)
+            let rendered = Interpolation.render(command, values: ["path": path, "command": command])
+            return .launchRaw(path: path, command: rendered, success: success)
         }
-        return .launch(path: parsed.path, command: parsed.command, terminal: store.terminal, success: success)
+        return .launch(path: path, command: command, terminal: store.terminal, success: success)
     }
 
     private static func formPage(_ store: Router.StoreView, flash: HTMLPage.Flash? = nil) -> String {
@@ -325,19 +279,6 @@ enum Router {
             rawCommands: store.rawCommands,
             flash: flash
         )
-    }
-
-    /// Reads (path, command) from the body in whichever encoding the request used.
-    private static func parse(_ request: HTTPRequest, isForm: Bool) -> (path: String, command: String)? {
-        if isForm {
-            let fields = FormDecoder.decode(request.body)
-            guard let path = fields["path"], let command = fields["command"] else { return nil }
-            return (path, command)
-        }
-        guard let body = try? JSONDecoder().decode(LaunchBody.self, from: request.body) else {
-            return nil
-        }
-        return (body.path, body.command)
     }
 }
 
@@ -637,7 +578,7 @@ final class HTTPServer {
                 }
                 if request.body.count >= declared {
                     // Trim any bytes past the declared length (a lying client or a
-                    // pipelined second request) so the JSON/form decoder sees only
+                    // pipelined second request) so the form decoder sees only
                     // this request's body.
                     request.body = request.body.prefix(declared)
                     self.dispatch(request, on: connection)

@@ -3,7 +3,7 @@
 //  PlungerTests
 //
 //  Covers the HTTP request parser and the pure routing logic. Routing stops at
-//  the decision point: a valid /launch yields a `.launch` outcome rather than
+//  the decision point: a valid form post yields a `.launch` outcome rather than
 //  spawning Ghostty, so these tests never touch the launcher.
 //
 
@@ -17,11 +17,11 @@ struct HTTPRequestParserTests {
     private func data(_ string: String) -> Data { Data(string.utf8) }
 
     @Test func parsesMethodTargetHeadersAndBody() throws {
-        let raw = data("POST /launch HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\nbody")
+        let raw = data("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\nbody")
         let request = try #require(HTTPRequestParser.parse(raw))
 
         #expect(request.method == "POST")
-        #expect(request.target == "/launch")
+        #expect(request.target == "/")
         #expect(request.headers["host"] == "localhost")
         #expect(request.headers["content-length"] == "4")
         #expect(request.body == data("body"))
@@ -124,12 +124,10 @@ struct RouterTests {
         target: String,
         token: String? = nil,
         username: String = "plunger",
-        contentType: String? = nil,
         body: String = ""
     ) -> HTTPRequest {
         var headers: [String: String] = [:]
         if let token { headers["authorization"] = "Bearer \(username):\(token)" }
-        if let contentType { headers["content-type"] = contentType }
         return HTTPRequest(method: method, target: target, headers: headers, body: Data(body.utf8))
     }
 
@@ -138,170 +136,72 @@ struct RouterTests {
         return ["authorization": "Basic \(encoded)"]
     }
 
+    private func response(_ outcome: RouteOutcome) throws -> HTTPResponse {
+        guard case let .respond(response) = outcome else {
+            Issue.record("expected a response outcome")
+            throw RouteExpectationError.wrongOutcome
+        }
+        return response
+    }
+
+    private enum RouteExpectationError: Error {
+        case wrongOutcome
+    }
+
+    // MARK: Auth
+
     @Test func healthNeedsNoAuth() {
         let outcome = Router.route(request(method: "GET", target: "/health"), store: storeView())
         #expect(outcome == .respond(.ok))
     }
 
-    @Test func pathsWithoutTokenIsForbidden() {
-        let outcome = Router.route(request(method: "GET", target: "/paths"), store: storeView())
-        #expect(outcome == .respond(.forbidden))
+    @Test func rootWithoutTokenChallenges() throws {
+        let page = try response(Router.route(request(method: "GET", target: "/"), store: storeView()))
+        #expect(page.status == 401)
+        #expect(page.headers["WWW-Authenticate"]?.hasPrefix("Basic") == true)
     }
 
-    @Test func pathsWithWrongTokenIsForbidden() {
-        let outcome = Router.route(
-            request(method: "GET", target: "/paths", token: "nope"),
+    @Test func rootWithWrongTokenChallenges() throws {
+        let page = try response(Router.route(
+            request(method: "GET", target: "/", token: "nope"),
             store: storeView()
-        )
-        #expect(outcome == .respond(.forbidden))
+        ))
+        #expect(page.status == 401)
     }
 
-    @Test func pathsWithWrongUsernameIsForbidden() {
-        let outcome = Router.route(
-            request(method: "GET", target: "/paths", token: token, username: "intruder"),
+    @Test func rootWithWrongUsernameChallenges() throws {
+        let page = try response(Router.route(
+            request(method: "GET", target: "/", token: token, username: "intruder"),
             store: storeView()
-        )
-        #expect(outcome == .respond(.forbidden))
+        ))
+        #expect(page.status == 401)
     }
 
-    @Test func pathsAcceptBasicAuth() {
-        let req = HTTPRequest(method: "GET", target: "/paths", headers: basicAuth(token), body: Data())
-        let outcome = Router.route(req, store: storeView(paths: ["/a"], commands: ["/b"]))
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
-            return
-        }
-        #expect(response.status == 200)
+    @Test func rootAcceptsBasicAuth() throws {
+        let request = HTTPRequest(method: "GET", target: "/", headers: basicAuth(token), body: Data())
+        let page = try response(Router.route(request, store: storeView()))
+        #expect(page.status == 200)
     }
 
-    @Test func pathsWithTokenListsSavedLists() throws {
-        let outcome = Router.route(
-            request(method: "GET", target: "/paths", token: token),
-            store: storeView(paths: ["/a"], commands: ["/b"])
-        )
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
-            return
-        }
-        #expect(response.status == 200)
-        #expect(response.body.contains("\"/a\""))
-        #expect(response.body.contains("\"/b\""))
-    }
-
-    @Test func pathsResponseIsSortedForDisplay() throws {
-        let outcome = Router.route(
-            request(method: "GET", target: "/paths", token: token),
-            store: storeView(paths: ["banana", "Apple"], commands: ["zsh", "Bash"])
-        )
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
-            return
-        }
-        let pathsIndex = try #require(response.body.range(of: "\"Apple\""))
-        let bananaIndex = try #require(response.body.range(of: "\"banana\""))
-        #expect(pathsIndex.lowerBound < bananaIndex.lowerBound)
-    }
-
-    @Test func pathsWithoutTokenSucceedsWhenAuthDisabled() {
-        let outcome = Router.route(
-            request(method: "GET", target: "/paths"),
-            store: storeView(paths: ["/a"], commands: ["/b"], authEnabled: false)
-        )
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
-            return
-        }
-        #expect(response.status == 200)
-    }
-
-    @Test func rootWithoutTokenServesFormWhenAuthDisabled() {
-        let outcome = Router.route(
+    @Test func rootWithoutTokenServesFormWhenAuthDisabled() throws {
+        let page = try response(Router.route(
             request(method: "GET", target: "/"),
-            store: storeView(paths: ["/a"], commands: ["/b"], authEnabled: false)
-        )
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
-            return
-        }
-        #expect(response.status == 200)
+            store: storeView(authEnabled: false)
+        ))
+        #expect(page.status == 200)
     }
 
-    @Test func launchWithoutTokenIsForbidden() {
-        let outcome = Router.route(
-            request(method: "POST", target: "/launch", body: #"{"path":"/work","command":"/bin/zsh"}"#),
+    @Test func launchWithoutTokenChallenges() throws {
+        let page = try response(Router.route(
+            request(method: "POST", target: "/", body: "path=%2Fwork&command=%2Fbin%2Fzsh"),
             store: storeView()
-        )
-        #expect(outcome == .respond(.forbidden))
+        ))
+        #expect(page.status == 401)
     }
 
-    @Test func launchWithMalformedBodyIsBadRequest() {
-        let outcome = Router.route(
-            request(method: "POST", target: "/launch", token: token, body: "not json"),
-            store: storeView()
-        )
-        #expect(outcome == .respond(.badRequest))
-    }
-
-    @Test func launchWithUnknownPathIsNotFound() {
-        let outcome = Router.route(
-            request(method: "POST", target: "/launch", token: token,
-                    body: #"{"path":"/missing","command":"/bin/zsh"}"#),
-            store: storeView()
-        )
-        #expect(outcome == .respond(.notFound))
-    }
-
-    @Test func launchWithUnknownCommandIsNotFound() {
-        let outcome = Router.route(
-            request(method: "POST", target: "/launch", token: token,
-                    body: #"{"path":"/work","command":"/missing"}"#),
-            store: storeView()
-        )
-        #expect(outcome == .respond(.notFound))
-    }
-
-    @Test func validJSONLaunchYieldsLaunchOutcome() {
-        let outcome = Router.route(
-            request(method: "POST", target: "/launch", token: token,
-                    body: #"{"path":"/work","command":"/bin/zsh"}"#),
-            store: storeView()
-        )
-        #expect(outcome == .launch(path: "/work", command: "/bin/zsh", terminal: .ghostty, success: .launched))
-    }
-
-    @Test func launchCarriesConfiguredTerminal() {
-        let outcome = Router.route(
-            request(method: "POST", target: "/launch", token: token,
-                    body: #"{"path":"/work","command":"/bin/zsh"}"#),
-            store: storeView(terminal: .iterm)
-        )
-        #expect(outcome == .launch(path: "/work", command: "/bin/zsh", terminal: .iterm, success: .launched))
-    }
-
-    @Test func rawCommandYieldsInterpolatedRawLaunch() {
-        let outcome = Router.route(
-            request(method: "POST", target: "/launch", token: token,
-                    body: #"{"path":"/work","command":"echo {{path}}"}"#),
-            store: storeView(commands: [], rawCommands: ["echo {{path}}"])
-        )
-        #expect(outcome == .launchRaw(path: "/work", command: "echo /work", success: .launched))
-    }
-
-    @Test func unknownRawCommandIsNotFound() {
-        let outcome = Router.route(
-            request(method: "POST", target: "/launch", token: token,
-                    body: #"{"path":"/work","command":"echo hi"}"#),
-            store: storeView(commands: [], rawCommands: [])
-        )
-        #expect(outcome == .respond(.notFound))
-    }
+    // MARK: Routes
 
     @Test func wrongMethodOnKnownRouteIsMethodNotAllowed() {
-        let outcome = Router.route(request(method: "DELETE", target: "/launch"), store: storeView())
-        #expect(outcome == .respond(.methodNotAllowed))
-    }
-
-    @Test func wrongMethodOnRootIsMethodNotAllowed() {
         let outcome = Router.route(request(method: "DELETE", target: "/"), store: storeView())
         #expect(outcome == .respond(.methodNotAllowed))
     }
@@ -311,76 +211,44 @@ struct RouterTests {
         #expect(outcome == .respond(.notFound))
     }
 
-    // MARK: HTML page and form launch
+    // MARK: The form
 
-    @Test func rootWithoutAuthChallenges() {
-        let outcome = Router.route(request(method: "GET", target: "/"), store: storeView())
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
-            return
-        }
-        #expect(response.status == 401)
-        #expect(response.headers["WWW-Authenticate"]?.hasPrefix("Basic") == true)
-    }
-
-    @Test func rootWithAuthServesForm() {
-        let outcome = Router.route(
+    @Test func rootServesTheFormPostingToItself() throws {
+        let page = try response(Router.route(
             request(method: "GET", target: "/", token: token),
             store: storeView(paths: ["/a"], commands: ["/b"])
-        )
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
-            return
-        }
-        #expect(response.status == 200)
-        #expect(response.contentType.hasPrefix("text/html"))
-        #expect(response.body.contains(#"<option value="/a">"#))
-        #expect(response.body.contains(#"<option value="/b">"#))
+        ))
+        #expect(page.status == 200)
+        #expect(page.contentType.hasPrefix("text/html"))
+        #expect(page.body.contains(#"action="/""#))
+        #expect(page.body.contains(#"<option value="/a">"#))
+        #expect(page.body.contains(#"<option value="/b">"#))
     }
 
-    @Test func rootEscapesHTMLInOptions() {
-        let outcome = Router.route(
+    @Test func rootEscapesHTMLInOptions() throws {
+        let page = try response(Router.route(
             request(method: "GET", target: "/", token: token),
             store: storeView(paths: ["/a&<b>"], commands: ["c\"d"])
-        )
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
-            return
-        }
-        #expect(response.body.contains("/a&amp;&lt;b&gt;"))
-        #expect(response.body.contains("c&quot;d"))
-        #expect(!response.body.contains("<b>"))
+        ))
+        #expect(page.body.contains("/a&amp;&lt;b&gt;"))
+        #expect(page.body.contains("c&quot;d"))
+        #expect(!page.body.contains("<b>"))
     }
 
-    @Test func rootWithEmptyListsShowsNote() {
-        let outcome = Router.route(
+    @Test func rootWithEmptyListsShowsNote() throws {
+        let page = try response(Router.route(
             request(method: "GET", target: "/", token: token),
             store: storeView(paths: [], commands: [])
-        )
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
-            return
-        }
-        #expect(response.status == 200)
-        #expect(response.body.contains("No saved paths or commands"))
+        ))
+        #expect(page.status == 200)
+        #expect(page.body.contains("No saved paths or commands"))
     }
 
-    @Test func formPostsToRoot() {
-        let outcome = Router.route(
-            request(method: "GET", target: "/", token: token),
-            store: storeView()
-        )
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
-            return
-        }
-        #expect(response.body.contains(#"action="/""#))
-    }
+    // MARK: Launching
 
-    @Test func formLaunchRedisplaysTheFormWithAFlash() {
+    @Test func launchRedisplaysTheFormWithAFlash() {
         let outcome = Router.route(
             request(method: "POST", target: "/", token: token,
-                    contentType: "application/x-www-form-urlencoded",
                     body: "path=%2Fwork&command=%2Fbin%2Fzsh"),
             store: storeView()
         )
@@ -395,41 +263,36 @@ struct RouterTests {
         #expect(success.body.contains(#"<option value="/work">"#))
     }
 
-    @Test func formLaunchWithoutAuthChallenges() {
-        let outcome = Router.route(
-            request(method: "POST", target: "/",
-                    contentType: "application/x-www-form-urlencoded",
-                    body: "path=%2Fwork&command=%2Fbin%2Fzsh"),
-            store: storeView()
-        )
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
-            return
-        }
-        #expect(response.status == 401)
-    }
-
-    @Test func formLaunchWithUnknownPathRedisplaysTheFormWithAnError() {
+    @Test func launchCarriesConfiguredTerminal() {
         let outcome = Router.route(
             request(method: "POST", target: "/", token: token,
-                    contentType: "application/x-www-form-urlencoded",
-                    body: "path=%2Fmissing&command=%2Fbin%2Fzsh"),
-            store: storeView()
+                    body: "path=%2Fwork&command=%2Fbin%2Fzsh"),
+            store: storeView(terminal: .iterm)
         )
-        guard case let .respond(response) = outcome else {
-            Issue.record("expected a response outcome")
+        guard case let .launch(_, _, terminal, _) = outcome else {
+            Issue.record("expected a launch outcome")
             return
         }
-        #expect(response.status == 404)
-        #expect(response.contentType.hasPrefix("text/html"))
-        #expect(response.body.contains(#"<p class="flash error">"#))
-        #expect(response.body.contains(#"<option value="/work">"#))
+        #expect(terminal == .iterm)
+    }
+
+    @Test func rawCommandYieldsInterpolatedRawLaunch() {
+        let outcome = Router.route(
+            request(method: "POST", target: "/", token: token,
+                    body: "path=%2Fwork&command=echo+%7B%7Bpath%7D%7D"),
+            store: storeView(commands: [], rawCommands: ["echo {{path}}"])
+        )
+        guard case let .launchRaw(path, command, _) = outcome else {
+            Issue.record("expected a raw launch outcome")
+            return
+        }
+        #expect(path == "/work")
+        #expect(command == "echo /work")
     }
 
     @Test func flashEscapesTheLaunchedPair() {
         let outcome = Router.route(
             request(method: "POST", target: "/", token: token,
-                    contentType: "application/x-www-form-urlencoded",
                     body: "path=%2Fa%26%3Cb%3E&command=c%22d"),
             store: storeView(paths: ["/a&<b>"], commands: ["c\"d"])
         )
@@ -440,19 +303,45 @@ struct RouterTests {
         #expect(success.body.contains("/a&amp;&lt;b&gt;"))
         #expect(!success.body.contains("<b>"))
     }
-}
 
-// MARK: - Display sorting
-
-struct SortedForDisplayTests {
-    @Test func sortsCaseInsensitively() {
-        #expect(["banana", "Apple", "cherry"].sortedForDisplay() == ["Apple", "banana", "cherry"])
+    @Test func launchWithMissingFieldIsBadRequest() {
+        let outcome = Router.route(
+            request(method: "POST", target: "/", token: token, body: "path=%2Fwork"),
+            store: storeView()
+        )
+        #expect(outcome == .respond(.badRequest))
     }
 
-    @Test func leavesStoredOrderUntouched() {
-        var values = ["banana", "Apple"]
-        _ = values.sortedForDisplay()
-        #expect(values == ["banana", "Apple"])
+    @Test func launchWithUnknownPathRedisplaysTheFormWithAnError() throws {
+        let page = try response(Router.route(
+            request(method: "POST", target: "/", token: token,
+                    body: "path=%2Fmissing&command=%2Fbin%2Fzsh"),
+            store: storeView()
+        ))
+        #expect(page.status == 404)
+        #expect(page.contentType.hasPrefix("text/html"))
+        #expect(page.body.contains(#"<p class="flash error">"#))
+        #expect(page.body.contains(#"<option value="/work">"#))
+    }
+
+    @Test func launchWithUnknownCommandRedisplaysTheFormWithAnError() throws {
+        let page = try response(Router.route(
+            request(method: "POST", target: "/", token: token,
+                    body: "path=%2Fwork&command=%2Fmissing"),
+            store: storeView()
+        ))
+        #expect(page.status == 404)
+        #expect(page.body.contains(#"<p class="flash error">"#))
+    }
+
+    @Test func unknownRawCommandRedisplaysTheFormWithAnError() throws {
+        let page = try response(Router.route(
+            request(method: "POST", target: "/", token: token,
+                    body: "path=%2Fwork&command=echo+hi"),
+            store: storeView(commands: [], rawCommands: [])
+        ))
+        #expect(page.status == 404)
+        #expect(page.body.contains(#"<p class="flash error">"#))
     }
 }
 
