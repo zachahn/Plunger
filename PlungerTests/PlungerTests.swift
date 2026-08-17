@@ -67,17 +67,17 @@ struct HTTPRequestParserTests {
     }
 
     @Test func returnsNilWhenHeadIncomplete() {
-        let raw = data("GET /health HTTP/1.1\r\nHost: localhost")
+        let raw = data("GET / HTTP/1.1\r\nHost: localhost")
         #expect(HTTPRequestParser.parse(raw) == nil)
     }
 
     @Test func returnsNilForMalformedRequestLine() {
-        let raw = data("GET /health\r\n\r\n")
+        let raw = data("GET /\r\n\r\n")
         #expect(HTTPRequestParser.parse(raw) == nil)
     }
 
     @Test func returnsNilForHeaderWithoutColon() {
-        let raw = data("GET /health HTTP/1.1\r\nBadHeader\r\n\r\n")
+        let raw = data("GET / HTTP/1.1\r\nBadHeader\r\n\r\n")
         #expect(HTTPRequestParser.parse(raw) == nil)
     }
 
@@ -149,11 +149,6 @@ struct RouterTests {
     }
 
     // MARK: Auth
-
-    @Test func healthNeedsNoAuth() {
-        let outcome = Router.route(request(method: "GET", target: "/health"), store: storeView())
-        #expect(outcome == .respond(.ok))
-    }
 
     @Test func rootWithoutTokenChallenges() throws {
         let page = try response(Router.route(request(method: "GET", target: "/"), store: storeView()))

@@ -24,7 +24,6 @@
 //    GET  /          -> 200 text/html (the launch form)      (auth, 401 challenge)
 //    POST /          -> launches, then serves the form with a flash (auth)
 //    GET  /style.css -> 200 text/css                         (no auth)
-//    GET  /health    -> 200 ok                               (no auth)
 //
 
 import Foundation
@@ -143,7 +142,6 @@ struct HTTPResponse: Equatable {
         HTTPResponse(status: status, reason: reason, contentType: "text/css; charset=utf-8", body: source)
     }
 
-    static let ok = HTTPResponse(status: 200, reason: "OK", body: "ok")
     static let badRequest = HTTPResponse(status: 400, reason: "Bad Request", body: "bad request")
     static let notFound = HTTPResponse(status: 404, reason: "Not Found", body: "not found")
     static let methodNotAllowed = HTTPResponse(status: 405, reason: "Method Not Allowed", body: "method not allowed")
@@ -203,10 +201,7 @@ enum Router {
         case ("GET", "/style.css"):
             return .respond(.css(HTMLPage.stylesheet))
 
-        case ("GET", "/health"):
-            return .respond(.ok)
-
-        case (_, "/"), (_, "/style.css"), (_, "/health"):
+        case (_, "/"), (_, "/style.css"):
             return .respond(.methodNotAllowed)
 
         default:
