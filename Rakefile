@@ -1,102 +1,147 @@
-# Rakefile — Plunger release pipeline
+# macOS release pipeline for Tuist + Sparkle + GitHub.
+# Copy this file to your project's root. Requires Ruby 2.6+, Rake, REXML,
+# Tuist, Xcode command-line tools, and an authenticated GitHub CLI (gh).
 #
-# Ships a notarized, Sparkle-signed build and publishes it to GitHub Releases,
-# then updates the raw-hosted appcast.xml on `main`.
+# Configure with environment variables or a project-local release.json:
+# {
+#   "SCHEME": "MyApp",
+#   "TEAM_ID": "YOUR_TEAM_ID",
+#   "NOTARY_PROFILE": "my-notary-profile",
+#   "SPARKLE_ACCOUNT": "com.example.MyApp"
+# }
+# Environment variables take precedence. release:setup can add /release.json to .gitignore.
+# Credentials and the Sparkle private key stay in Keychain.
+# APPLE_ID is prompted for only when creating new notarization credentials.
 #
-# One-time notary setup (needed once before the first `rake release:notarize`):
+# Optional settings:
+# WORKSPACE       Path relative to this file; otherwise the sole *.xcworkspace.
+# GH_REPO         owner/repo; otherwise inferred from a github.com origin URL.
+# APP_NAME        Exported bundle name without .app; otherwise the sole .app.
+# CONFIGURATION   Release (default).
+# BUILD_DIR       build (default); reuse a directory to resume a release.
+# MANIFEST        Project.swift (default), source of the release build number.
+# SPARKLE_BIN_DIR Tuist/.build/artifacts/sparkle/Sparkle/bin (default).
+# RELEASE_NOTES   Markdown file relative to this file; otherwise no release notes.
 #
-#   rake notary_setup       # save a notarytool keychain profile (prompts for a password)
+# rake release:setup (create or complete release.json and configure notarization)
+# rake release:bump VERSION=1.1 [BUILD_VERSION=4]
+# rake release:meta:diff (compare this Rakefile with the upstream main branch)
+# rake release:meta:upgrade (replace this Rakefile with the upstream main branch)
+# rake release
+# rake -T
 #
-# Bump the version before a release:
-#
-#   rake bump VERSION=1.1   # set marketing version to 1.1 and increment the build number
-#
-# The steps are broken out so you can run them one at a time while learning the
-# flow, or run `rake release` to do the whole thing:
-#
-#   rake release:preflight  # check tools, keys, and repo state before starting
-#   rake release:archive    # archive (xcodebuild archive)
-#   rake release:export     # export a Developer ID-signed .app (xcodebuild -exportArchive)
-#   rake release:zip        # zip the .app
-#   rake release:notarize   # notarize the zip and staple the ticket
-#   rake release:appcast    # generate/update appcast.xml (EdDSA-signed) for this version
-#   rake release:push       # commit and push the version bump + updated appcast.xml
-#   rake release:github     # create the GitHub Release and upload the zip
-#
-# release:push pushes before release:github so the tag `gh release create` makes
-# points at the commit that actually carries this version's appcast and bump.
-#
-#   rake release            # runs the seven steps above in order
-#
-# Each task is independently runnable and reads the version from the built
-# product, so `rake release:notarize` works after `release:zip` in a later shell.
-#
-# Configuration lives in release.json (gitignored); every key is required, with
-# no defaults. Override any value on the command line, e.g. `rake release
-# NOTARY_PROFILE=foo`. The required keys:
-#   PROJECT         e.g. Plunger.xcodeproj
-#   SCHEME          e.g. Plunger
-#   CONFIGURATION   e.g. Release
-#   NOTARY_PROFILE  keychain profile saved via `xcrun notarytool store-credentials`
-#   APPLE_ID        Apple ID email for notarization
-#   TEAM_ID         10-char Apple Developer Team ID
-#   GH_REPO         owner/name for gh + the appcast URL, e.g. zachahn/Plunger
-#   APPCAST_BRANCH  branch that hosts appcast.xml via raw URL, e.g. main
+# Stages can also run independently: release:run:preflight, release:run:archive,
+# release:run:export, release:run:zip, release:run:notarize,
+# release:run:appcast, release:run:tag, release:run:github.
+# This workflow builds a universal macOS app with automatic Developer ID signing,
+# notarizes a ZIP, and publishes a regular GitHub release marked latest.
+# The app's SUFeedURL must be:
+# https://github.com/<owner>/<repo>/releases/latest/download/appcast.xml
+# SUPublicEDKey must match the Sparkle key stored under SPARKLE_ACCOUNT.
+# Commit and push source changes before releasing. The tag stage creates and
+# pushes v<marketing-version> for the archived commit.
+# release:bump supports literal string MARKETING_VERSION and numeric string
+# CURRENT_PROJECT_VERSION entries in the Tuist manifest; all matches are updated.
 
 require "shellwords"
 require "fileutils"
 require "json"
+require "digest"
+require "rexml/document"
+require "pathname"
+require "net/http"
+require "tempfile"
+require "rbconfig"
+require "open3"
+
+UPSTREAM_RAKEFILE = "https://raw.githubusercontent.com/zachahn/release-tuist-sparkle/main/Rakefile"
+
+DEFAULT_RELEASE_TITLE = "%{app_name} %{marketing_version}"
+DEFAULT_BUMP_COMMIT_MESSAGE = "Release %{marketing_version}"
 
 RELEASE_CONFIG =
   begin
     path = File.join(__dir__, "release.json")
-    File.exist?(path) ? JSON.parse(File.read(path)) : {}
+    config = File.exist?(path) ? JSON.parse(File.read(path)) : {}
+    abort("release.json must contain a JSON object") unless config.is_a?(Hash)
+    config
+  rescue JSON::ParserError => error
+    abort("invalid release.json: #{error.message}")
   end
 
-def setting(key)
-  ENV[key] || RELEASE_CONFIG[key] ||
+# Resolve required settings only when a task needs them, so rake -T works
+# before release credentials have been configured.
+def optional_setting(key)
+  value = ENV.fetch(key) { RELEASE_CONFIG[key] }
+  return nil if value.nil?
+  abort("#{key} must be a nonempty string") unless value.is_a?(String) && !value.strip.empty?
+  value
+end
+
+def setting(key, default = nil)
+  optional_setting(key) || default ||
     abort("missing #{key} — set it in release.json or pass #{key}=... on the command line")
 end
 
-PROJECT        = setting("PROJECT")
-SCHEME         = setting("SCHEME")
-CONFIGURATION  = setting("CONFIGURATION")
-NOTARY_PROFILE = setting("NOTARY_PROFILE")
-APPLE_ID       = setting("APPLE_ID")
-TEAM_ID        = setting("TEAM_ID")
-GH_REPO        = setting("GH_REPO")
-APPCAST_BRANCH = setting("APPCAST_BRANCH")
-
-ROOT       = __dir__
-BUILD_DIR  = File.join(ROOT, "build")
-ARCHIVE    = File.join(BUILD_DIR, "Plunger.xcarchive")
+ROOT = __dir__
+BUILD_DIR = File.expand_path(setting("BUILD_DIR", "build"), ROOT)
+ARCHIVE = File.join(BUILD_DIR, "release.xcarchive")
 EXPORT_DIR = File.join(BUILD_DIR, "export")
-APP        = File.join(EXPORT_DIR, "Plunger.app")
-DIST_DIR   = File.join(BUILD_DIR, "dist") # holds the zip + appcast for generate_appcast
-APPCAST    = File.join(ROOT, "appcast.xml")
-PBXPROJ    = File.join(ROOT, PROJECT, "project.pbxproj")
+DIST_DIR = File.join(BUILD_DIR, "dist")
+APPCAST = File.join(DIST_DIR, "appcast.xml")
+SOURCE_COMMIT = File.join(BUILD_DIR, "release-source-commit")
+MANIFEST = File.expand_path(setting("MANIFEST", "Project.swift"), ROOT)
+Dir.chdir(ROOT)
 
 # ---- helpers ---------------------------------------------------------------
 
 # ANSI SGR color codes, named so the tasks below read as ok/warn/halt/step
 # instead of raw \e[..m sequences.
-GREEN  = 32 # success lines
+GREEN = 32 # success lines
 YELLOW = 33 # caution lines
-RED    = 31 # failure messages
-CYAN   = 36 # step banners and echoed commands
+RED = 31 # failure messages
+CYAN = 36 # step banners and echoed commands
 
 # Wrap the string in an ANSI color and reset. One place for the escape codes.
 class String
-  def colorize(number) = "\e[#{number}m#{self}\e[0m"
+  def colorize(number)
+    "\e[#{number}m#{self}\e[0m"
+  end
 end
 
-def ok(text)   = puts "✓ #{text}".colorize(GREEN)  # green success line
-def warn(text) = puts text.colorize(YELLOW)        # yellow caution line
-def note(text) = puts "  #{text}"                  # plain, indented secondary hint
-def halt(text) = abort text.colorize(RED)          # red message, then abort the run
+def ok(text)
+  puts "✓ #{text}".colorize(GREEN) # green success line
+end
+
+def warn(text)
+  puts text.colorize(YELLOW) # yellow caution line
+end
+
+def note(text)
+  puts "  #{text}" # plain, indented secondary hint
+end
+
+def halt(text)
+  abort text.colorize(RED) # red message, then abort the run
+end
+
+def setup_confirm(question)
+  loop do
+    print "#{question} [Y/n]: "
+    $stdout.flush
+    answer = $stdin.gets
+    halt("setup cancelled") unless answer
+    response = answer.strip.downcase
+    return true if ["", "y", "yes"].include?(response)
+    return false if ["n", "no"].include?(response)
+    warn "  enter yes or no"
+  end
+end
 
 # Print a cyan banner announcing the step about to run.
-def step(text) = puts "\n▶ #{text}".colorize(CYAN)
+def step(text)
+  puts "\n▶ #{text}".colorize(CYAN)
+end
 
 # Run a command, echoing it first. Raises (aborting the rake run) on failure.
 def sh!(*args)
@@ -111,300 +156,564 @@ def capture!(*args)
   out
 end
 
-# Read a build-setting value from the exported .app's Info.plist.
-def plist(key)
-  halt("missing #{APP} — run `rake release:export` first") unless File.exist?(APP)
-  capture!("/usr/libexec/PlistBuddy", "-c", "Print :#{key}", File.join(APP, "Contents", "Info.plist")).strip
+def workspace
+  configured = optional_setting("WORKSPACE")
+  return File.expand_path(configured, ROOT) if configured
+  candidates = Dir.glob(File.join(ROOT, "*.xcworkspace")).select { |path| File.directory?(path) }
+  halt("set WORKSPACE — expected one .xcworkspace in #{ROOT}, found #{candidates.length}") unless candidates.one?
+  candidates.first
 end
 
-def marketing_version = plist("CFBundleShortVersionString") # e.g. 1.1
-def build_version     = plist("CFBundleVersion")            # e.g. 6  (Sparkle's sparkle:version)
-def tag               = "v#{marketing_version}"
-def zip_name          = "Plunger-#{marketing_version}.zip"
-def zip_path          = File.join(DIST_DIR, zip_name)
-def download_prefix   = "https://github.com/#{GH_REPO}/releases/download/#{tag}/"
+def app
+  configured = optional_setting("APP_NAME")
+  if configured
+    halt("APP_NAME must be a bundle name without .app or path separators") if configured.end_with?(".app") || configured.match?(/[\\\/]/) || %w[. ..].include?(configured)
+    path = File.join(EXPORT_DIR, "#{configured}.app")
+    halt("missing #{path} — run `rake release:run:export` first") unless File.directory?(path)
+    return path
+  end
+  candidates = Dir.glob(File.join(EXPORT_DIR, "*.app")).select { |path| File.directory?(path) }
+  halt("expected one exported .app, found #{candidates.length} — run `rake release:run:export` or set APP_NAME") unless candidates.one?
+  candidates.first
+end
 
-# The newest Sparkle bin/ directory SPM unpacked, or nil if none exists yet.
+def app_name
+  File.basename(app, ".app")
+end
+
+def gh_repo
+  @gh_repo ||= begin
+    repo = optional_setting("GH_REPO")
+    unless repo
+      remote = capture!("git", "remote", "get-url", "origin").strip
+      match = remote.match(%r{\A(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+/[^/]+?)(?:\.git)?/?\z})
+      halt("cannot infer GitHub repository from origin — set GH_REPO=owner/repo") unless match
+      repo = match[1]
+    end
+    halt("GH_REPO must be owner/repo on github.com") unless repo.match?(%r{\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z})
+    repo
+  end
+end
+
+def source_commit
+  capture!("git", "rev-parse", "HEAD").strip
+end
+
+def clean_source!
+  paths = ["."]
+  relative_build = Pathname.new(BUILD_DIR).relative_path_from(Pathname.new(ROOT)).to_s
+  if relative_build == "."
+    halt("BUILD_DIR must not be the project root")
+  elsif relative_build != ".." && !relative_build.start_with?("../")
+    tracked_build_files = capture!("git", "ls-files", "--", relative_build)
+    halt("BUILD_DIR contains tracked source files; choose a separate build directory") unless tracked_build_files.empty?
+    paths << ":(exclude)#{relative_build}"
+  end
+  changes = capture!("git", "status", "--porcelain", "--untracked-files=all", "--", *paths)
+  halt("source has uncommitted or untracked changes; commit or ignore them before releasing:\n#{changes}") unless changes.empty?
+end
+
+def releases
+  JSON.parse(capture!("gh", "api", "--paginate", "repos/#{gh_repo}/releases", "--slurp")).flatten
+end
+
+def manifest_build_versions
+  halt("missing Tuist manifest: #{MANIFEST}") unless File.file?(MANIFEST)
+  builds = File.read(MANIFEST).scan(/"CURRENT_PROJECT_VERSION"\s*:\s*"(\d+)"/).flatten
+  halt("no CURRENT_PROJECT_VERSION found in #{MANIFEST}") if builds.empty?
+  builds
+end
+
+def manifest_build_version
+  builds = manifest_build_versions.uniq
+  halt("conflicting CURRENT_PROJECT_VERSION values in #{MANIFEST}") unless builds.one?
+  builds.first
+end
+
+def remote_tag_commit
+  reference = JSON.parse(capture!("gh", "api", "repos/#{gh_repo}/git/ref/tags/#{tag}"))
+  object = reference.fetch("object")
+  while object["type"] == "tag"
+    object = JSON.parse(capture!("gh", "api", "repos/#{gh_repo}/git/tags/#{object.fetch("sha")}")).fetch("object")
+  end
+  halt("remote tag #{tag} does not resolve to a commit") unless object["type"] == "commit"
+  object.fetch("sha")
+end
+
+def verify_archive_source!
+  clean_source!
+  halt("missing archive source record — run `rake release:run:archive` first") unless File.file?(SOURCE_COMMIT)
+  commit = source_commit
+  halt("checkout changed since archive; rebuild the release") unless File.read(SOURCE_COMMIT).strip == commit
+  commit
+end
+
+def verify_release_source!
+  commit = verify_archive_source!
+  remote_commit = remote_tag_commit
+  halt("remote tag #{tag} does not point to archived commit #{commit}") unless remote_commit == commit
+end
+
+# Read a build-setting value from the exported .app's Info.plist.
+def plist(key)
+  capture!("/usr/libexec/PlistBuddy", "-c", "Print :#{key}", File.join(app, "Contents", "Info.plist")).strip
+end
+
+def marketing_version
+  plist("CFBundleShortVersionString") # e.g. 1.1
+end
+
+def build_version
+  plist("CFBundleVersion") # e.g. 6 (Sparkle's sparkle:version)
+end
+
+def tag
+  "v#{marketing_version}"
+end
+
+# GitHub asset names and appcast URLs need a filename without spaces or URL delimiters.
+def zip_name
+  "#{app_name.gsub(/[^A-Za-z0-9._-]+/, "-")}-#{marketing_version}.zip"
+end
+
+def zip_path
+  File.join(DIST_DIR, zip_name)
+end
+
+def download_prefix
+  "https://github.com/#{gh_repo}/releases/download/#{tag}/"
+end
+
+# Tuist resolves Sparkle and its tools here, pinned by Package.resolved.
 def sparkle_bin_dir
-  Dir.glob(File.expand_path(
-    "~/Library/Developer/Xcode/DerivedData/**/artifacts/sparkle/Sparkle/bin"
-  )).max_by { |p| File.mtime(p) }
+  File.expand_path(setting("SPARKLE_BIN_DIR", "Tuist/.build/artifacts/sparkle/Sparkle/bin"), ROOT)
 end
 
 def generate_appcast_bin
   dir = sparkle_bin_dir
   path = dir && File.join(dir, "generate_appcast")
-  halt("generate_appcast not found — build the app once so SPM resolves Sparkle") unless path && File.exist?(path)
+  halt("generate_appcast not found — run `tuist install` first") unless path && File.exist?(path)
   path
 end
 
-def notary_profile_exists?
+def notary_profile_exists?(profile = setting("NOTARY_PROFILE"))
   # `notarytool history` succeeds only if the named keychain profile resolves.
-  system("xcrun", "notarytool", "history", "--keychain-profile", NOTARY_PROFILE,
-         out: File::NULL, err: File::NULL)
+  system("xcrun", "notarytool", "history", "--keychain-profile", profile,
+    out: File::NULL, err: File::NULL)
+end
+
+def upstream_rakefile
+  uri = URI(UPSTREAM_RAKEFILE)
+  response = Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: 10, read_timeout: 30) do |http|
+    http.get(uri.request_uri)
+  end
+  halt("Could not download #{UPSTREAM_RAKEFILE}: HTTP #{response.code}") unless response.is_a?(Net::HTTPSuccess)
+  response.body
+rescue => error
+  halt("Could not download #{UPSTREAM_RAKEFILE}: #{error.message}")
 end
 
 # ---- tasks -----------------------------------------------------------------
 
-desc "One-time: save a notarytool keychain profile (prompts for an app-specific password)"
-task :notary_setup do
-  if notary_profile_exists?
-    ok "notarytool profile \"#{NOTARY_PROFILE}\" already exists — nothing to do"
-    next
-  end
-
-  puts "Creating notarytool profile \"#{NOTARY_PROFILE}\" for #{APPLE_ID} (team #{TEAM_ID})."
-  puts "Generate an app-specific password at https://appleid.apple.com → Sign-In and Security."
-  # Omitting --password makes notarytool prompt for it, so the secret is typed
-  # straight into store-credentials and never passes through this task or the
-  # shell history.
-  sh! "xcrun", "notarytool", "store-credentials", NOTARY_PROFILE,
-      "--apple-id", APPLE_ID,
-      "--team-id", TEAM_ID
-  ok "profile \"#{NOTARY_PROFILE}\" saved; `rake release:notarize` can now notarize"
-end
-
-desc "Bump the marketing version (VERSION=x.y) and increment the build number"
-task :bump do
-  version = ENV.fetch("VERSION")
-  halt("set VERSION, e.g. `rake bump VERSION=1.1`") if version.to_s.strip.empty?
-  halt("VERSION must look like 1.1 or 1.2.3, got #{version.inspect}") unless
-    version =~ /\A\d+(\.\d+){1,2}\z/
-
-  # GENERATE_INFOPLIST_FILE = YES means the built Info.plist takes its version
-  # from these build settings, not from Plunger/Info.plist — so edit the
-  # pbxproj directly, the same values Xcode's UI writes. agvtool doesn't fit:
-  # it edits the source Info.plist (regenerated at build time) and trips over
-  # the synchronized-folder layout.
-  text = File.read(PBXPROJ)
-
-  builds = text.scan(/CURRENT_PROJECT_VERSION = (\d+);/).flatten.map(&:to_i)
-  halt("no CURRENT_PROJECT_VERSION found in pbxproj") if builds.empty?
-  next_build = builds.max + 1
-
-  # Every target shares one build number (Sparkle's sparkle:version), so set
-  # them all to the same next value.
-  text = text.gsub(/CURRENT_PROJECT_VERSION = \d+;/, "CURRENT_PROJECT_VERSION = #{next_build};")
-
-  # Bump MARKETING_VERSION only for the app target, identified by its bundle id
-  # (each MARKETING_VERSION line is immediately followed by the config's
-  # PRODUCT_BUNDLE_IDENTIFIER). The test targets keep their own version. This
-  # anchor works whatever the current value is, so re-bumping stays correct.
-  app_marketing = /MARKETING_VERSION = [^;]+;(\s*PRODUCT_BUNDLE_IDENTIFIER = com\.zachahn\.Plunger;)/
-  halt("no app MARKETING_VERSION line found in pbxproj") unless text.match?(app_marketing)
-  text = text.gsub(app_marketing, "MARKETING_VERSION = #{version};\\1")
-
-  File.write(PBXPROJ, text)
-  ok "marketing version #{version}, build #{next_build}"
-  note "review the pbxproj diff, then commit before releasing."
-end
-
-desc "Full release: preflight → archive → export → zip → notarize → appcast → push → GitHub"
+desc "Full release: preflight → archive → export → zip → notarize → appcast → tag → GitHub publish"
 task release: %w[
-  release:preflight
-  release:archive
-  release:export
-  release:zip
-  release:notarize
-  release:appcast
-  release:push
-  release:github
+  release:run:preflight
+  release:run:archive
+  release:run:export
+  release:run:zip
+  release:run:notarize
+  release:run:appcast
+  release:run:tag
+  release:run:github
 ] do
-  ok "release #{tag} complete"
+  ok "release #{tag} published"
 end
 
 namespace :release do
-  desc "check that the tools, keys, and repo state a release needs are in place"
-  task :preflight do
-    step "preflight — checking the release environment"
+  desc "Interactively configure release.json and notarization"
+  task :setup do
+    path = File.join(ROOT, "release.json")
+    config = RELEASE_CONFIG.dup
+    manifest = File.file?(MANIFEST) ? File.read(MANIFEST) : ""
+    projects = Dir.glob(File.join(ROOT, "*.xcworkspace")) + Dir.glob(File.join(ROOT, "*.xcodeproj"))
+    project_basenames = projects.map { |project| File.basename(project).sub(/\.(xcworkspace|xcodeproj)\z/, "") }.uniq
+    inferred_scheme = project_basenames.first if project_basenames.one?
+    project_names = manifest.scan(/\bname:\s*"([^"]+)"/).flatten.uniq
+    inferred_scheme ||= project_names.first if project_names.one?
+    bundle_ids = manifest.scan(/bundleId:\s*"([^"]+)"/).flatten +
+      manifest.scan(/"PRODUCT_BUNDLE_IDENTIFIER"\s*:\s*"([^"]+)"/).flatten
+    bundle_ids.uniq!
+    inferred_account = bundle_ids.first if bundle_ids.one? && !bundle_ids.first.match?(/[\\$]/)
 
-    # Collect every problem, then report them together, so one `rake release`
-    # surfaces all the fixes at once instead of failing on the first missing key.
-    problems = []
-    ask = ->(label, ok_cond) { ok_cond ? ok(label) : (problems << label) }
+    defaults = {
+      "SCHEME" => inferred_scheme,
+      "SPARKLE_ACCOUNT" => inferred_account
+    }
+    labels = {
+      "SCHEME" => "Xcode scheme to archive",
+      "TEAM_ID" => "Apple Developer team ID",
+      "NOTARY_PROFILE" => "notarytool Keychain profile name",
+      "SPARKLE_ACCOUNT" => "Sparkle signing key account"
+    }
 
-    # xcodebuild for archive/export.
-    ask.("xcodebuild present",
-         system("xcodebuild", "-version", out: File::NULL, err: File::NULL))
+    labels.each do |key, label|
+      next if config.key?(key)
 
-    # Sparkle tools (generate_appcast for the appcast, generate_keys to read the
-    # EdDSA key) land in DerivedData once the app has built and SPM resolved.
-    bin = sparkle_bin_dir
-    ask.("Sparkle tools resolved (build the app once so SPM fetches Sparkle)",
-         bin && File.exist?(File.join(bin, "generate_appcast")))
-
-    # The appcast is signed with the EdDSA private key in the Keychain.
-    # generate_keys -p prints the public key and exits 0 only if the key exists.
-    keys = bin && File.join(bin, "generate_keys")
-    ask.("Sparkle EdDSA signing key in Keychain (run `#{keys || "generate_keys"}` once)",
-         keys && File.exist?(keys) &&
-           system(keys, "-p", out: File::NULL, err: File::NULL))
-
-    # notarytool keychain profile for the notarize step.
-    ask.("notarytool profile \"#{NOTARY_PROFILE}\" saved (run `rake notary_setup`)",
-         notary_profile_exists?)
-
-    # gh authenticated for creating the GitHub release.
-    ask.("gh authenticated (run `gh auth login`)",
-         system("gh", "auth", "status", out: File::NULL, err: File::NULL))
-
-    # The push step commits to APPCAST_BRANCH; make sure we're on it with a remote.
-    branch = capture!("git", "rev-parse", "--abbrev-ref", "HEAD").strip
-    ask.("on branch #{APPCAST_BRANCH} (currently #{branch})", branch == APPCAST_BRANCH)
-    ask.("git remote origin configured",
-         !capture!("git", "remote").split.empty?)
-
-    # Managed Developer ID signing usually can't be listed on the CLI, so a
-    # missing cert here is a heads-up, not a failure — the export may still work.
-    unless system("sh", "-c",
-                  "security find-identity -v -p codesigning | grep -q 'Developer ID Application'",
-                  out: File::NULL, err: File::NULL)
-      warn "  ⚠ no 'Developer ID Application' cert listed on the CLI — fine if Xcode manages signing, but export will fail if it truly can't sign"
+      scheme = config["SCHEME"] || ENV["SCHEME"] || inferred_scheme
+      defaults["NOTARY_PROFILE"] = "#{scheme.downcase.gsub(/[^a-z0-9]+/, "-")}-notary" if scheme.is_a?(String) && !scheme.empty?
+      default = ENV[key].to_s.strip.empty? ? defaults[key] : ENV[key]
+      loop do
+        print "#{key} (#{label})#{default ? " [#{default}]" : ""}: "
+        $stdout.flush
+        answer = $stdin.gets
+        halt("setup cancelled; release.json was not changed") unless answer
+        value = answer.strip
+        value = default if value.empty?
+        if value && !value.empty?
+          config[key] = value
+          break
+        end
+        warn "  #{key} is required"
+      end
     end
 
-    halt("preflight found problems:\n  - #{problems.join("\n  - ")}") unless problems.empty?
-    ok "preflight passed — the release environment looks ready"
+    if config == RELEASE_CONFIG
+      ok "release.json already has all required keys"
+    else
+      Tempfile.create([".release-", ".json"], ROOT) do |file|
+        file.write("#{JSON.pretty_generate(config)}\n")
+        file.flush
+        File.chmod(File.stat(path).mode & 0o7777, file.path) if File.exist?(path)
+        File.rename(file.path, path)
+      end
+      ok "saved #{path}"
+    end
+
+    gitignore = File.join(ROOT, ".gitignore")
+    ignored = File.file?(gitignore) && File.foreach(gitignore).any? { |line| line.strip == "/release.json" }
+    unless ignored
+      if setup_confirm("Add /release.json to .gitignore?")
+        content = File.file?(gitignore) ? File.binread(gitignore) : ""
+        File.open(gitignore, "a") do |file|
+          file.write("\n") unless content.empty? || content.end_with?("\n")
+          file.write("/release.json\n")
+        end
+        ok "added /release.json to .gitignore"
+      else
+        note "Add /release.json to .gitignore before releasing."
+      end
+    end
+
+    profile = ENV.fetch("NOTARY_PROFILE", config["NOTARY_PROFILE"])
+    if notary_profile_exists?(profile)
+      ok "notarytool profile \"#{profile}\" already exists"
+      next
+    end
+
+    if setup_confirm("Create notarytool Keychain profile \"#{profile}\" now?")
+      apple_id = ENV["APPLE_ID"] || config["APPLE_ID"]
+      if apple_id.to_s.strip.empty?
+        loop do
+          print "APPLE_ID (Apple ID email): "
+          $stdout.flush
+          answer = $stdin.gets
+          halt("setup cancelled; release.json was saved") unless answer
+          apple_id = answer.strip
+          break unless apple_id.empty?
+          warn "  APPLE_ID is required"
+        end
+      end
+      puts "Generate an app-specific password at https://appleid.apple.com → Sign-In and Security."
+      # notarytool prompts for the password itself; it never enters release.json.
+      sh! "xcrun", "notarytool", "store-credentials", profile,
+        "--apple-id", apple_id,
+        "--team-id", ENV.fetch("TEAM_ID", config["TEAM_ID"])
+      ok "profile \"#{profile}\" saved; `rake release:run:notarize` can now notarize"
+    else
+      note "Run `rake release:setup` later to create the notarytool profile."
+    end
   end
 
-  desc "archive the app (xcodebuild archive)"
-  task :archive do
-    step "archiving the app"
-    FileUtils.mkdir_p(BUILD_DIR)
-    FileUtils.rm_rf(ARCHIVE)
-    sh! "xcodebuild", "archive",
-        "-project", PROJECT,
-        "-scheme", SCHEME,
-        "-configuration", CONFIGURATION,
+  namespace :meta do
+    desc "show the diff between this Rakefile and the upstream main branch"
+    task :diff do
+      output, errors, status = Open3.capture3("diff", "-u", "--label", "local/Rakefile",
+        "--label", "upstream/Rakefile", File.join(ROOT, "Rakefile"), "-",
+        stdin_data: upstream_rakefile)
+      halt("diff failed: #{errors.strip}") unless [0, 1].include?(status.exitstatus)
+      print output
+      ok "Rakefile matches upstream" if status.success?
+    end
+
+    desc "replace this Rakefile with the upstream main branch version"
+    task :upgrade do
+      path = File.join(ROOT, "Rakefile")
+      content = upstream_rakefile
+      if File.binread(path) == content
+        ok "Rakefile already matches upstream"
+        next
+      end
+
+      Tempfile.create([".Rakefile-", ".tmp"], ROOT) do |upstream|
+        upstream.write(content)
+        upstream.flush
+        halt("Upstream Rakefile has invalid Ruby syntax") unless system(RbConfig.ruby, "-c", upstream.path, out: File::NULL)
+        File.chmod(File.stat(path).mode & 0o7777, upstream.path)
+        File.rename(upstream.path, path)
+      end
+      ok "Rakefile replaced with #{UPSTREAM_RAKEFILE}"
+    end
+  end
+
+  desc "Bump VERSION=x.y, optionally set BUILD_VERSION=n, and commit Project.swift"
+  task :bump do
+    version = ENV["VERSION"]
+    halt("set VERSION, e.g. `rake release:bump VERSION=1.1`") if version.to_s.strip.empty?
+    halt("VERSION must look like 1.1 or 1.2.3") unless version.match?(/\A\d+(\.\d+){1,2}\z/)
+    requested_build = ENV["BUILD_VERSION"]
+    halt("BUILD_VERSION must be a positive integer") if requested_build && !requested_build.match?(/\A[1-9]\d*\z/)
+
+    # Project.swift is authoritative; Tuist regenerates the Xcode project.
+    builds = manifest_build_versions.map(&:to_i)
+    manifest_path = Pathname.new(MANIFEST).relative_path_from(Pathname.new(ROOT)).to_s
+    halt("MANIFEST must be inside the project to commit it") if manifest_path == ".." || manifest_path.start_with?("../")
+    halt("#{MANIFEST} has uncommitted changes; commit them before bumping") unless capture!("git", "status", "--porcelain", "--", manifest_path).empty?
+    text = File.read(MANIFEST)
+    halt("no MARKETING_VERSION found in #{MANIFEST}") unless text.match?(/"MARKETING_VERSION"\s*:\s*"[^"]+"/)
+    next_build = requested_build ? requested_build.to_i : builds.max + 1
+    halt("BUILD_VERSION must be greater than current build #{builds.max}") unless next_build > builds.max
+    text = text.gsub(/"CURRENT_PROJECT_VERSION"\s*:\s*"\d+"/, %("CURRENT_PROJECT_VERSION": "#{next_build}"))
+    text = text.gsub(/"MARKETING_VERSION"\s*:\s*"[^"]+"/, %("MARKETING_VERSION": "#{version}"))
+    File.write(MANIFEST, text)
+    commit_message = format(DEFAULT_BUMP_COMMIT_MESSAGE, marketing_version: version, build_version: next_build)
+    sh! "git", "commit", "--only", "-m", commit_message, "--", manifest_path
+    sh! "git", "show", "HEAD"
+    ok "marketing version #{version}, build #{next_build}"
+  end
+
+  namespace :run do
+    desc "check that the tools, keys, and repo state a release needs are in place"
+    task :preflight do
+      step "preflight — checking the release environment"
+
+      # Collect every problem, then report them together, so one `rake release`
+      # surfaces all the fixes at once instead of failing on the first missing key.
+      problems = []
+      ask = ->(label, ok_cond) { ok_cond ? ok(label) : (problems << label) }
+
+      %w[SCHEME TEAM_ID NOTARY_PROFILE SPARKLE_ACCOUNT].each { |key| setting(key) }
+      gh_repo
+      clean_source!
+      notes = optional_setting("RELEASE_NOTES")
+      halt("missing RELEASE_NOTES file: #{notes}") if notes && !File.file?(File.expand_path(notes, ROOT))
+      sh! "tuist", "install"
+
+      # xcodebuild for archive/export.
+      ask.call("xcodebuild present", system("xcodebuild", "-version", out: File::NULL, err: File::NULL))
+
+      # Sparkle tools (generate_appcast for the appcast, generate_keys to read the
+      # EdDSA key) are installed by Tuist.
+      bin = sparkle_bin_dir
+      ask.call("Sparkle tools resolved (run tuist install or set SPARKLE_BIN_DIR)", bin && File.exist?(File.join(bin, "generate_appcast")))
+
+      # The appcast is signed with the EdDSA private key in the Keychain.
+      # generate_keys -p prints the public key and exits 0 only if the key exists.
+      keys = bin && File.join(bin, "generate_keys")
+      ask.call("Sparkle EdDSA signing key in Keychain (run `#{keys || "generate_keys"} --account #{setting("SPARKLE_ACCOUNT")}` once)", keys && File.exist?(keys) &&
+             system(keys, "--account", setting("SPARKLE_ACCOUNT"), "-p", out: File::NULL, err: File::NULL))
+
+      # notarytool keychain profile for the notarize step.
+      ask.call("notarytool profile \"#{setting("NOTARY_PROFILE")}\" saved (run `rake release:setup`)", notary_profile_exists?)
+
+      # gh authenticated for creating the GitHub release.
+      ask.call("gh authenticated (run `gh auth login`)", system("gh", "auth", "status", out: File::NULL, err: File::NULL))
+
+      # Managed Developer ID signing usually can't be listed on the CLI, so a
+      # missing cert here is a heads-up, not a failure — the export may still work.
+      unless system("sh", "-c",
+        "security find-identity -v -p codesigning | grep -q 'Developer ID Application'",
+        out: File::NULL, err: File::NULL)
+        warn "  ⚠ no 'Developer ID Application' cert listed on the CLI — fine if Xcode manages signing, but export will fail if it truly can't sign"
+      end
+
+      halt("preflight found problems:\n  - #{problems.join("\n  - ")}") unless problems.empty?
+      ok "preflight passed — the release environment looks ready"
+    end
+
+    desc "archive the app (xcodebuild archive)"
+    task :archive do
+      step "archiving the app"
+      scheme = setting("SCHEME")
+      clean_source!
+      FileUtils.mkdir_p(BUILD_DIR)
+      # Invalidate downstream artifacts before building, including on failure.
+      # Otherwise a resumed publish could pair an old ZIP with this source record.
+      FileUtils.rm_rf([ARCHIVE, EXPORT_DIR, DIST_DIR])
+      FileUtils.rm_f([SOURCE_COMMIT, File.join(BUILD_DIR, "notarization.json")])
+      sh! "tuist", "install"
+      sh! "tuist", "generate", "--no-open"
+      sh! "tuist", "xcodebuild", "archive",
+        "-workspace", workspace,
+        "-scheme", scheme,
+        "-configuration", setting("CONFIGURATION", "Release"),
         "-destination", "generic/platform=macOS",
-        "-archivePath", ARCHIVE
-    ok "archived → #{ARCHIVE}"
-  end
+        "-archivePath", ARCHIVE,
+        "-derivedDataPath", File.join(BUILD_DIR, "DerivedData"),
+        "-allowProvisioningUpdates",
+        "ARCHS=arm64 x86_64", "ONLY_ACTIVE_ARCH=NO"
+      File.write(SOURCE_COMMIT, "#{source_commit}\n")
+      ok "archived → #{ARCHIVE}"
+    end
 
-  desc "export a Developer ID-signed .app from the archive"
-  task :export do
-    step "exporting a Developer ID-signed .app"
-    halt("missing archive — run `rake release:archive` first") unless File.exist?(ARCHIVE)
-    FileUtils.rm_rf(EXPORT_DIR)
+    desc "export a Developer ID-signed .app from the archive"
+    task :export do
+      step "exporting a Developer ID-signed .app"
+      halt("missing archive — run `rake release:run:archive` first") unless File.exist?(ARCHIVE)
+      team_id = setting("TEAM_ID")
+      # A new export must be zipped, notarized, and signed again before publishing.
+      FileUtils.rm_rf([EXPORT_DIR, DIST_DIR])
+      FileUtils.rm_f(File.join(BUILD_DIR, "notarization.json"))
 
-    # method=developer-id reuses Xcode's managed Developer ID signing, so this
-    # works even when `security find-identity` can't list the cert on the CLI.
-    options = File.join(BUILD_DIR, "ExportOptions.plist")
-    File.write(options, <<~PLIST)
-      <?xml version="1.0" encoding="UTF-8"?>
-      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-      <plist version="1.0">
-      <dict>
-          <key>method</key><string>developer-id</string>
-          <key>signingStyle</key><string>automatic</string>
-      </dict>
-      </plist>
-    PLIST
+      # method=developer-id reuses Xcode's managed Developer ID signing, so this
+      # works even when `security find-identity` can't list the cert on the CLI.
+      options = File.join(BUILD_DIR, "ExportOptions.plist")
+      File.write(options, <<~PLIST)
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>method</key><string>developer-id</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>#{REXML::Text.normalize(team_id)}</string>
+            <key>signingCertificate</key><string>Developer ID Application</string>
+        </dict>
+        </plist>
+      PLIST
 
-    sh! "xcodebuild", "-exportArchive",
+      # Tuist does not support the export action.
+      sh! "xcodebuild", "-exportArchive",
         "-archivePath", ARCHIVE,
         "-exportPath", EXPORT_DIR,
+        "-allowProvisioningUpdates",
         "-exportOptionsPlist", options
-    halt("export did not produce #{APP}") unless File.exist?(APP)
-    ok "exported → #{APP} (#{marketing_version}, build #{build_version})"
-  end
-
-  desc "zip the exported .app for distribution"
-  task :zip do
-    step "zipping the .app"
-    halt("missing #{APP} — run `rake release:export` first") unless File.exist?(APP)
-    FileUtils.mkdir_p(DIST_DIR)
-    FileUtils.rm_f(zip_path)
-    # ditto preserves the bundle's symlinks/metadata; Sparkle expects a clean zip.
-    sh! "ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", APP, zip_path
-    ok "zipped → #{zip_path}"
-  end
-
-  desc "notarize the zip with notarytool and staple the .app"
-  task :notarize do
-    step "notarizing and stapling"
-    halt("missing #{zip_path} — run `rake release:zip` first") unless File.exist?(zip_path)
-
-    unless notary_profile_exists?
-      abort(<<~MSG)
-        #{%(No notarytool keychain profile named "#{NOTARY_PROFILE}".).colorize(RED)}
-        Create one once (interactive), then re-run:
-
-          xcrun notarytool store-credentials "#{NOTARY_PROFILE}" \\
-            --apple-id "<your Apple ID email>" \\
-            --team-id "<your 10-char Team ID>" \\
-            --password "<an app-specific password from appleid.apple.com>"
-
-        Or override the name with NOTARY_PROFILE=<name>.
-      MSG
+      sh! "codesign", "--verify", "--deep", "--strict", "--verbose=2", app
+      ok "exported → #{app} (#{marketing_version}, build #{build_version})"
     end
 
-    sh! "xcrun", "notarytool", "submit", zip_path,
-        "--keychain-profile", NOTARY_PROFILE, "--wait"
-    # Staple the ticket onto the .app, then re-zip so the distributed zip carries it.
-    sh! "xcrun", "stapler", "staple", APP
-    sh! "xcrun", "stapler", "validate", APP
-    FileUtils.rm_f(zip_path)
-    sh! "ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", APP, zip_path
-    ok "notarized + stapled; re-zipped → #{zip_path}"
-  end
+    desc "zip the exported .app for distribution"
+    task :zip do
+      step "zipping the .app"
+      FileUtils.mkdir_p(DIST_DIR)
+      FileUtils.rm_f(zip_path)
+      # ditto preserves the bundle's symlinks/metadata; Sparkle expects a clean zip.
+      sh! "ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, zip_path
+      ok "zipped → #{zip_path}"
+    end
 
-  desc "generate/update the EdDSA-signed appcast.xml for this version"
-  task :appcast do
-    step "generating the signed appcast.xml"
-    halt("missing #{zip_path} — run earlier steps first") unless File.exist?(zip_path)
+    desc "notarize the zip with notarytool and staple the .app"
+    task :notarize do
+      step "notarizing and stapling"
+      halt("missing #{zip_path} — run `rake release:run:zip` first") unless File.exist?(zip_path)
 
-    # generate_appcast reads/writes an appcast in the archives directory, so seed
-    # DIST_DIR with the current committed appcast, let it append this version's
-    # item (signed with the private key from the Keychain), then copy it back.
-    FileUtils.cp(APPCAST, File.join(DIST_DIR, "appcast.xml")) if File.exist?(APPCAST)
+      halt("No notarytool profile #{setting("NOTARY_PROFILE").inspect}; run `rake release:setup`.") unless notary_profile_exists?
+      result = capture!("xcrun", "notarytool", "submit", zip_path,
+        "--keychain-profile", setting("NOTARY_PROFILE"), "--wait", "--output-format", "json")
+      File.write(File.join(BUILD_DIR, "notarization.json"), result)
+      submission = JSON.parse(result)
+      halt("Notarization #{submission["status"]}; use `xcrun notarytool log #{submission["id"]} --keychain-profile #{setting("NOTARY_PROFILE")}`.") unless submission["status"] == "Accepted"
+      # Staple the ticket onto the .app, then re-zip so the distributed zip carries it.
+      sh! "xcrun", "stapler", "staple", app
+      sh! "xcrun", "stapler", "validate", app
+      FileUtils.rm_f(zip_path)
+      sh! "ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, zip_path
+      sh! "codesign", "--verify", "--deep", "--strict", "--verbose=2", app
+      sh! "spctl", "--assess", "--type", "execute", "--verbose=2", app
+      File.write("#{zip_path}.sha256", "#{Digest::SHA256.file(zip_path).hexdigest}  #{zip_name}\n")
+      ok "notarized + stapled; re-zipped → #{zip_path}"
+    end
 
-    sh! generate_appcast_bin,
+    desc "generate/update the EdDSA-signed appcast.xml for this version"
+    task :appcast do
+      step "generating the signed appcast.xml"
+      halt("missing #{zip_path} — run earlier steps first") unless File.exist?(zip_path)
+
+      sh! "xcrun", "stapler", "validate", app
+      public_key = capture!(File.join(sparkle_bin_dir, "generate_keys"), "--account", setting("SPARKLE_ACCOUNT"), "-p").strip
+      halt("Sparkle Keychain key does not match the app's public key") unless public_key == plist("SUPublicEDKey")
+      expected_feed = "https://github.com/#{gh_repo}/releases/latest/download/appcast.xml"
+      halt("App feed URL does not match GH_REPO") unless plist("SUFeedURL") == expected_feed
+
+      sh! generate_appcast_bin,
+        "--account", setting("SPARKLE_ACCOUNT"),
+        "--versions", build_version,
+        "--maximum-deltas", "0",
         "--download-url-prefix", download_prefix,
-        "-o", File.join(DIST_DIR, "appcast.xml"),
+        "-o", APPCAST,
         DIST_DIR
-
-    FileUtils.cp(File.join(DIST_DIR, "appcast.xml"), APPCAST)
-    ok "appcast.xml updated for #{marketing_version} (build #{build_version})"
-    note "enclosure URL prefix: #{download_prefix}"
-  end
-
-  desc "commit and push the version bump + updated appcast.xml"
-  task :push do
-    step "committing and pushing"
-    # Commit the appcast (from release:appcast) together with any pending version
-    # bump (from `rake bump`), so the tag release:github creates points at a
-    # commit that carries both. Stage pbxproj too rather than leaving an
-    # uncommitted bump out of the tagged commit.
-    paths = [APPCAST, PBXPROJ].select do |p|
-      !capture!("git", "status", "--porcelain", "--", p).strip.empty?
+      ok "appcast.xml updated for #{marketing_version} (build #{build_version})"
+      note "enclosure URL prefix: #{download_prefix}"
     end
-    halt("no appcast.xml or version-bump changes to commit") if paths.empty?
 
-    sh! "git", "add", *paths
-    sh! "git", "commit", "-m", "Release #{tag}"
-    sh! "git", "push", "origin", APPCAST_BRANCH
-    ok "committed and pushed to #{APPCAST_BRANCH}"
-    note "Sparkle feed: https://raw.githubusercontent.com/#{GH_REPO}/#{APPCAST_BRANCH}/appcast.xml"
-  end
-
-  desc "create the GitHub Release and upload the zip"
-  task :github do
-    step "publishing the GitHub release"
-    halt("missing #{zip_path} — run earlier steps first") unless File.exist?(zip_path)
-
-    # Reuse an existing release for this tag if present; otherwise create it.
-    # release:push has already pushed, so a freshly created tag points at the
-    # commit carrying this version's appcast and bump.
-    exists = system("gh", "release", "view", tag, "--repo", GH_REPO,
-                    out: File::NULL, err: File::NULL)
-    if exists
-      sh! "gh", "release", "upload", tag, zip_path, "--repo", GH_REPO, "--clobber"
-    else
-      sh! "gh", "release", "create", tag, zip_path,
-          "--repo", GH_REPO,
-          "--title", "Plunger #{marketing_version}",
-          "--generate-notes"
+    desc "tag the archived commit and push the tag to origin"
+    task :tag do
+      step "tagging the archived commit"
+      commit = verify_archive_source!
+      if system("git", "show-ref", "--verify", "--quiet", "refs/tags/#{tag}")
+        local_commit = capture!("git", "rev-parse", "refs/tags/#{tag}^{commit}").strip
+        halt("local tag #{tag} does not point to archived commit #{commit}") unless local_commit == commit
+      else
+        sh! "git", "tag", tag, commit
+      end
+      sh! "git", "push", "origin", "refs/tags/#{tag}"
+      verify_release_source!
+      ok "tag #{tag} points to archived commit #{commit} on GitHub"
     end
-    ok "GitHub release #{tag} published with #{zip_name}"
+
+    desc "publish a regular GitHub release with the ZIP, checksum, and appcast"
+    task :github do
+      step "publishing the GitHub release"
+      halt("missing ZIP or appcast — run earlier steps first") unless File.exist?(zip_path) && File.exist?(APPCAST)
+      verify_release_source!
+      expected_build = manifest_build_version
+      halt("app build #{build_version} does not match CURRENT_PROJECT_VERSION #{expected_build} in #{MANIFEST}") unless build_version == expected_build
+      release_list = releases
+      document = REXML::Document.new(File.read(APPCAST))
+      item = REXML::XPath.match(document, "/rss/channel/item").find do |entry|
+        entry.elements["sparkle:version"]&.text == build_version
+      end
+      enclosure = item&.elements&.[]("enclosure")
+      halt("Appcast does not describe this ZIP") unless enclosure &&
+        enclosure.attributes["url"] == "#{download_prefix}#{zip_name}" &&
+        enclosure.attributes["length"].to_i == File.size(zip_path)
+      sh! File.join(sparkle_bin_dir, "sign_update"), "--account", setting("SPARKLE_ACCOUNT"),
+        "--verify", zip_path, enclosure.attributes["sparkle:edSignature"]
+      Dir.chdir(DIST_DIR) { sh! "shasum", "-a", "256", "-c", "#{zip_name}.sha256" }
+
+      # Stage assets in a draft so the feed becomes public only after upload succeeds.
+      # Existing public assets must stay immutable; reruns may replace draft assets.
+      existing = release_list.find { |release| release["tag_name"] == tag }
+      assets = [zip_path, "#{zip_path}.sha256", APPCAST]
+      if existing
+        halt("#{tag} is already published; bump the version first") unless existing["draft"]
+        sh! "gh", "release", "upload", tag, *assets, "--repo", gh_repo, "--clobber"
+      else
+        supplied_notes = optional_setting("RELEASE_NOTES")
+        notes_args = if supplied_notes
+          notes = File.expand_path(supplied_notes, ROOT)
+          halt("missing RELEASE_NOTES file: #{notes}") unless File.file?(notes)
+          ["--notes-file", notes]
+        else
+          ["--notes", ""]
+        end
+        sh! "gh", "release", "create", tag, *assets,
+          "--repo", gh_repo, "--draft", "--verify-tag",
+          "--title", format(DEFAULT_RELEASE_TITLE, app_name: app_name, marketing_version: marketing_version),
+          *notes_args
+      end
+      sh! "gh", "release", "edit", tag, "--repo", gh_repo,
+        "--draft=false", "--prerelease=false", "--latest"
+      ok "GitHub release #{tag} published with #{zip_name} and appcast.xml"
+      note "Sparkle feed: https://github.com/#{gh_repo}/releases/latest/download/appcast.xml"
+    end
   end
 end
