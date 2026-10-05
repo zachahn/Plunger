@@ -34,13 +34,13 @@
 #
 # Stages can also run independently: release:run:preflight, release:run:archive,
 # release:run:export, release:run:zip, release:run:notarize,
-# release:run:appcast, release:run:tag, release:run:github, release:run:push.
+# release:run:appcast, release:run:tag, release:run:push, release:run:github.
 # This workflow builds a universal macOS app with automatic Developer ID signing,
 # notarizes a ZIP, and publishes a regular GitHub release marked latest.
 # Without APPCAST_BRANCH, appcast.xml is a release asset and SUFeedURL must be:
 # https://github.com/<owner>/<repo>/releases/latest/download/appcast.xml
-# With APPCAST_BRANCH, the push stage commits appcast.xml to that branch after
-# the release is public, and SUFeedURL must be:
+# With APPCAST_BRANCH, the push stage commits appcast.xml to that branch and
+# pushes it before the GitHub release is created, and SUFeedURL must be:
 # https://raw.githubusercontent.com/<owner>/<repo>/<APPCAST_BRANCH>/appcast.xml
 # SUPublicEDKey must match the Sparkle key stored under SPARKLE_ACCOUNT.
 # Commit and push source changes before releasing. The tag stage creates and
@@ -249,9 +249,18 @@ end
 def verify_archive_source!
   clean_source!
   halt("missing archive source record — run `rake release:run:archive` first") unless File.file?(SOURCE_COMMIT)
-  commit = source_commit
-  halt("checkout changed since archive; rebuild the release") unless File.read(SOURCE_COMMIT).strip == commit
+  commit = File.read(SOURCE_COMMIT).strip
+  halt("checkout changed since archive; rebuild the release") unless source_commit == commit || only_appcast_since?(commit)
   commit
+end
+
+# With APPCAST_BRANCH, the push stage commits appcast.xml on top of the archived
+# commit before the GitHub release exists; that is the only change allowed.
+def only_appcast_since?(commit)
+  return false unless appcast_branch
+  return false unless system("git", "merge-base", "--is-ancestor", commit, "HEAD")
+  appcast_path = capture!("git", "rev-parse", "--show-prefix").strip + File.basename(REPO_APPCAST)
+  capture!("git", "diff", "--name-only", commit, "HEAD").split("\n") == [appcast_path]
 end
 
 def verify_release_source!
@@ -338,7 +347,7 @@ end
 
 # ---- tasks -----------------------------------------------------------------
 
-desc "Full release: preflight → archive → export → zip → notarize → appcast → tag → GitHub publish → push appcast"
+desc "Full release: preflight → archive → export → zip → notarize → appcast → tag → push appcast → GitHub publish"
 task release: %w[
   release:run:preflight
   release:run:archive
@@ -347,8 +356,8 @@ task release: %w[
   release:run:notarize
   release:run:appcast
   release:run:tag
-  release:run:github
   release:run:push
+  release:run:github
 ] do
   ok "release #{tag} published"
 end
@@ -758,18 +767,15 @@ namespace :release do
       step "committing and pushing appcast.xml"
       halt("missing appcast — run `rake release:run:appcast` first") unless File.exist?(APPCAST)
       halt("on branch #{current_branch}; check out #{appcast_branch} to publish the appcast") unless current_branch == appcast_branch
-      clean_source!
-      # The feed goes live on push, so publish it only after the release assets exist.
-      published = releases.find { |release| release["tag_name"] == tag }
-      halt("GitHub release #{tag} is not published — run `rake release:run:github` first") unless published && !published["draft"]
-      # A rerun after a failed push finds the appcast already committed.
+      verify_archive_source!
+      # The feed goes live on push, before release:run:github uploads the ZIP it
+      # points to. A rerun after a failed push finds the appcast already committed.
       if File.exist?(REPO_APPCAST) && FileUtils.identical?(APPCAST, REPO_APPCAST)
         note "appcast.xml already committed"
       else
-        verify_archive_source!
         FileUtils.cp(APPCAST, REPO_APPCAST)
         sh! "git", "add", "--", REPO_APPCAST
-        sh! "git", "commit", "-m", "Publish appcast for #{tag}", "--", REPO_APPCAST
+        sh! "git", "commit", "-m", "Release #{tag}", "--", REPO_APPCAST
       end
       sh! "git", "push", "origin", "HEAD:refs/heads/#{appcast_branch}"
       ok "appcast.xml for #{tag} pushed to #{appcast_branch}"
