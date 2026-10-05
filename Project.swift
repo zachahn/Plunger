@@ -22,7 +22,7 @@ let project = Project(
                 "NSHumanReadableCopyright": "",
                 "SUEnableAutomaticChecks": true,
                 "SUFeedURL": "https://raw.githubusercontent.com/zachahn/Plunger/main/appcast.xml",
-                "SUPublicEDKey": "aVfR/4R4PI6EQhamZkTHZB8kwK/1k2IN87CPITODP3o=",
+                "SUPublicEDKey": "lfWsQqVDo47na2Wdgji4oVA4WOtwIJx35SfuEiUmcbA=",
             ]),
             buildableFolders: [
                 "Plunger/Sources",
