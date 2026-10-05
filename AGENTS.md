@@ -1,6 +1,7 @@
 ## Build and test
 
 ```sh
-xcodebuild test -project Plunger.xcodeproj -scheme Plunger -destination 'platform=macOS' -only-testing:PlungerTests
-xcodebuild build -project Plunger.xcodeproj -scheme Plunger -destination 'platform=macOS'
+tuist install && tuist generate --no-open
+tuist xcodebuild test -workspace Plunger.xcworkspace -scheme Plunger -destination 'platform=macOS' -only-testing:PlungerTests
+tuist xcodebuild build -workspace Plunger.xcworkspace -scheme Plunger -destination 'platform=macOS'
 ```
