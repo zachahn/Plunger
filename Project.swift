@@ -33,8 +33,8 @@ let project = Project(
             ],
             settings: .settings(base: [
                 "CODE_SIGN_IDENTITY": "Apple Development",
-                "MARKETING_VERSION": "1.2",
-                "CURRENT_PROJECT_VERSION": "8",
+                "MARKETING_VERSION": "1.3",
+                "CURRENT_PROJECT_VERSION": "9",
                 "ENABLE_HARDENED_RUNTIME": "YES",
                 "SWIFT_APPROACHABLE_CONCURRENCY": "YES",
                 "SWIFT_DEFAULT_ACTOR_ISOLATION": "MainActor",
