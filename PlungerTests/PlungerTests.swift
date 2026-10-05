@@ -1,17 +1,6 @@
-//
-//  PlungerTests.swift
-//  PlungerTests
-//
-//  Covers the HTTP request parser and the pure routing logic. Routing stops at
-//  the decision point: a valid form post yields a `.launch` outcome rather than
-//  spawning Ghostty, so these tests never touch the launcher.
-//
-
 import Foundation
 import Testing
 @testable import Plunger
-
-// MARK: - Request parser
 
 struct HTTPRequestParserTests {
     private func data(_ string: String) -> Data { Data(string.utf8) }
@@ -94,8 +83,6 @@ struct HTTPRequestParserTests {
     }
 }
 
-// MARK: - Router
-
 struct RouterTests {
     private let token = "secret-token"
 
@@ -148,8 +135,6 @@ struct RouterTests {
         case wrongOutcome
     }
 
-    // MARK: Auth
-
     @Test func rootWithoutTokenChallenges() throws {
         let page = try response(Router.route(request(method: "GET", target: "/"), store: storeView()))
         #expect(page.status == 401)
@@ -194,8 +179,6 @@ struct RouterTests {
         #expect(page.status == 401)
     }
 
-    // MARK: Routes
-
     @Test func wrongMethodOnKnownRouteIsMethodNotAllowed() {
         let outcome = Router.route(request(method: "DELETE", target: "/"), store: storeView())
         #expect(outcome == .respond(.methodNotAllowed))
@@ -205,8 +188,6 @@ struct RouterTests {
         let outcome = Router.route(request(method: "GET", target: "/nope"), store: storeView())
         #expect(outcome == .respond(.notFound))
     }
-
-    // MARK: The form
 
     @Test func rootServesTheFormPostingToItself() throws {
         let page = try response(Router.route(
@@ -238,8 +219,6 @@ struct RouterTests {
         #expect(page.status == 200)
         #expect(page.body.contains("No saved paths or commands"))
     }
-
-    // MARK: Launching
 
     @Test func launchRedisplaysTheFormWithAFlash() {
         let outcome = Router.route(
@@ -340,8 +319,6 @@ struct RouterTests {
     }
 }
 
-// MARK: - Path expansion
-
 @Suite("PathExpansion")
 struct PathExpansionTests {
     private func makeTree(_ entries: [String]) throws -> String {
@@ -416,8 +393,6 @@ struct PathExpansionTests {
     }
 }
 
-// MARK: - Form decoding
-
 struct FormDecoderTests {
     @Test func decodesAndPercentDecodes() {
         let fields = FormDecoder.decode(Data("path=%2Fwork&command=ls+-la".utf8))
@@ -432,8 +407,6 @@ struct FormDecoderTests {
     }
 }
 
-// MARK: - Login shell wrapping
-
 @Suite("Launcher.loginShellWrapped")
 struct LoginShellWrappedTests {
     @Test func wrapsPlainCommandInLoginInteractiveZsh() {
@@ -441,7 +414,6 @@ struct LoginShellWrappedTests {
     }
 
     @Test func keepsArgumentsInsideSingleQuotes() {
-        // Spaces stay within one quoted argument, not split into argv words.
         #expect(Launcher.loginShellWrapped("/bin/ls -la /tmp") == "/bin/zsh -lic '/bin/ls -la /tmp'")
     }
 
@@ -454,7 +426,6 @@ struct LoginShellWrappedTests {
     }
 
     @Test func leavesDoubleQuotesUntouched() {
-        // Double quotes are literal inside single quotes; no escaping needed.
         #expect(
             Launcher.loginShellWrapped(#"echo "a b""#)
                 == #"/bin/zsh -lic 'echo "a b"'"#
@@ -462,15 +433,11 @@ struct LoginShellWrappedTests {
     }
 }
 
-// MARK: - HTML escaping
-
 struct HTMLPageTests {
     @Test func escapesEntities() {
         #expect(HTMLPage.escape(#"<a> & "b""#) == "&lt;a&gt; &amp; &quot;b&quot;")
     }
 }
-
-// MARK: - Peer IP parsing
 
 @Suite("PeerIP")
 struct PeerIPTests {
@@ -484,7 +451,6 @@ struct PeerIPTests {
     }
 
     @Test func collapsesIPv4MappedIPv6() {
-        // ::ffff:100.64.0.1 should reduce to the 4-byte IPv4 form.
         let ip = PeerIP("::ffff:100.64.0.1")
         #expect(ip?.isIPv4 == true)
         #expect(ip?.bytes == [100, 64, 0, 1])
@@ -499,8 +465,6 @@ struct PeerIPTests {
         #expect(PeerIP("") == nil)
     }
 }
-
-// MARK: - Peer filtering
 
 @Suite("PeerFilter")
 struct PeerFilterTests {
@@ -526,7 +490,6 @@ struct PeerFilterTests {
         #expect(filter.allows(ip("100.64.0.1")))
         #expect(filter.allows(ip("100.100.50.2")))
         #expect(filter.allows(ip("100.127.255.254")))
-        // Just outside the range.
         #expect(filter.allows(ip("100.63.255.255")) == false)
         #expect(filter.allows(ip("100.128.0.0")) == false)
         #expect(filter.allows(ip("127.0.0.1")) == false)
@@ -558,8 +521,6 @@ struct PeerFilterTests {
         #expect(filter.allows(ip("192.168.1.1")) == false)
     }
 }
-
-// MARK: - Interpolation
 
 struct InterpolationTests {
     @Test func basicSingleSubstitution() {

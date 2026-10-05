@@ -1,13 +1,3 @@
-//
-//  FloatingPanel.swift
-//  Plunger
-//
-//  An NSPanel that floats above normal windows (including other apps') and
-//  follows the user across Spaces and full-screen apps, without activating
-//  Plunger or stealing focus when it appears. SwiftUI's MenuBarExtra has no
-//  built-in equivalent, so the panel and its controller are plain AppKit.
-//
-
 import AppKit
 import SwiftUI
 
@@ -52,8 +42,6 @@ final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
-/// Owns the floating panel's lifecycle: lazily builds it on first show, then
-/// toggles visibility without rebuilding the SwiftUI content each time.
 @MainActor
 final class EditPanelController {
     private var panel: FloatingPanel?

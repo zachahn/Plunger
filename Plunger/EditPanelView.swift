@@ -1,32 +1,11 @@
-//
-//  EditPanelView.swift
-//  Plunger
-//
-//  The persistent edit panel's content (see FloatingPanel.swift): a TabView
-//  with a Table tab each for Paths, Commands, and Raw commands, plus an HTTP
-//  Server tab. The Commands tab also carries the terminal picker. In a
-//  table tab, click selects a row; double-click or the right-click menu edits
-//  it (in a sheet); Delete key or the − button removes it. A +/− bar under each
-//  table handles add/remove, since SwiftUI's Table has no built-in one. Rows
-//  are sorted alphabetically for display; the stored order in ConfigStore is
-//  left untouched. The HTTP Server tab shows the URL and the fixed "plunger"
-//  username, lets the user change the port (rebinding the listener at once),
-//  shows the token with Copy and Regenerate actions, and offers checkboxes for
-//  the source networks the server accepts (loopback, Tailscale, LAN, or any).
-//
-
 import SwiftUI
 
-/// Table requires Identifiable rows; the saved paths/commands are plain,
-/// deduplicated strings, so this wraps a value just enough to satisfy that
-/// without adding a project-wide Identifiable conformance to String itself.
 private struct Row: Identifiable, Hashable {
     let value: String
     var id: String { value }
 }
 
 private extension Array where Element == String {
-    /// Wraps each string (already sorted via `sortedForDisplay()`) as a Row.
     func asRows() -> [Row] {
         map { Row(value: $0) }
     }
@@ -52,17 +31,12 @@ struct EditPanelView: View {
     }
 }
 
-/// The HTTP server tab: read-only connection details plus token actions. The
-/// username is fixed to "plunger" (see Router.username); the token is random
-/// and can only be regenerated, not typed. Regenerating invalidates any client
-/// still using the old token.
 private struct HTTPServerColumn: View {
     @Bindable var store: ConfigStore
     @Bindable var server: HTTPServer
     @State private var confirmRegenerate = false
     @State private var portText = ""
 
-    /// The typed port parsed to a valid 1–65535 value, or nil when invalid.
     private var parsedPort: UInt16? {
         guard let value = UInt16(portText.trimmingCharacters(in: .whitespaces)), value > 0 else {
             return nil
@@ -168,13 +142,9 @@ private struct HTTPServerColumn: View {
         }
     }
 
-    /// A checkbox binding for one network category, backed by the stored set.
-    /// Changes take effect on the next connection; no restart needed.
     private func binding(for category: PeerCategory) -> Binding<Bool> {
         Binding(
             get: {
-                // "Any" being enabled makes every category effective, so show
-                // the others as checked without altering the stored set.
                 if category != .any && store.config.allowedPeers.contains(.any) { return true }
                 return store.config.allowedPeers.contains(category)
             },
@@ -186,8 +156,6 @@ private struct HTTPServerColumn: View {
         )
     }
 
-    /// Saves the typed port (if valid and changed) and rebinds the listener so
-    /// it takes effect at once. Resets the field to the saved value afterward.
     private func applyPort() {
         guard let port = parsedPort, port != store.config.port else { return }
         store.setPort(port)
@@ -196,8 +164,6 @@ private struct HTTPServerColumn: View {
     }
 }
 
-/// Wraps a table and a +/− toolbar footer, shared by both tabs so they lay
-/// out the same. The tab label supplies the heading, so no title here.
 private struct TabColumn<Content: View, Footer: View>: View {
     @ViewBuilder let content: Content
     @ViewBuilder let footer: Footer
@@ -218,10 +184,6 @@ private struct TabColumn<Content: View, Footer: View>: View {
     }
 }
 
-/// The macOS-style +/− button pair that sits under a Table. SwiftUI's Table
-/// has no built-in add/remove control, so this hand-builds the AppKit look:
-/// two small borderless buttons in the table's footer strip. The − button is
-/// disabled until a row is selected.
 private struct PlusMinusBar: View {
     let canRemove: Bool
     let onAdd: () -> Void
@@ -252,7 +214,6 @@ private struct PathsColumn: View {
     @State private var sheet: PathSheet?
     @State private var selection: Row.ID?
 
-    /// The add/edit form shown in a sheet. `edit` carries the row being edited.
     private enum PathSheet: Identifiable {
         case add
         case edit(String)
@@ -325,9 +286,6 @@ private struct PathsColumn: View {
     }
 }
 
-/// A small form for choosing a directory, shown in a sheet. The directory
-/// picker itself is still the native NSOpenPanel; this just wraps the trigger
-/// and shows the chosen value before committing.
 private struct PathForm: View {
     let title: String
     var initialPath: String = ""
@@ -398,7 +356,6 @@ private struct CommandsColumn: View {
     @State private var sheet: CommandSheet?
     @State private var selection: Row.ID?
 
-    /// The add/edit form shown in a sheet. `edit` carries the row being edited.
     private enum CommandSheet: Identifiable {
         case add
         case edit(String)
@@ -413,8 +370,6 @@ private struct CommandsColumn: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // The terminal a regular command opens in. Raw commands ignore it and
-            // run directly, so this setting lives with the commands it affects.
             HStack {
                 Picker("Terminal", selection: Binding(
                     get: { store.config.terminal },
@@ -484,10 +439,6 @@ private struct CommandsColumn: View {
     }
 }
 
-/// A small form for typing and resolving a command, shown in a sheet. Carries
-/// the same validation as the old NSAlert-based dialog: Resolve rewrites the
-/// program to an absolute path; Save is blocked until the program exists on
-/// disk.
 private struct CommandForm: View {
     let title: String
     var initialCommand: String = ""
@@ -548,7 +499,6 @@ private struct RawCommandsColumn: View {
     @State private var sheet: RawCommandSheet?
     @State private var selection: Row.ID?
 
-    /// The add/edit form shown in a sheet. `edit` carries the row being edited.
     private enum RawCommandSheet: Identifiable {
         case add
         case edit(String)
@@ -613,10 +563,6 @@ private struct RawCommandsColumn: View {
     }
 }
 
-/// A small form for typing an arbitrary shell command, shown in a sheet. Unlike
-/// CommandForm, a raw command isn't resolved or checked against disk — it can be
-/// any string, including template placeholders — so Save only requires
-/// non-empty text.
 private struct RawCommandForm: View {
     let title: String
     var initialCommand: String = ""

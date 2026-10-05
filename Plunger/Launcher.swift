@@ -1,15 +1,6 @@
-//
-//  Launcher.swift
-//  Plunger
-//
-//  Opens a Ghostty terminal tab for a (path, command) pair by running an
-//  AppleScript via osascript.
-//
-
 import Foundation
 
 enum Launcher {
-    /// Escapes a Swift string as an AppleScript string literal, including quotes.
     private static func appleScriptString(_ string: String) -> String {
         let escaped = string
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -17,28 +8,20 @@ enum Launcher {
         return "\"" + escaped + "\""
     }
 
-    /// Wraps `command` so Ghostty runs it under a login+interactive zsh.
-    ///
     /// Ghostty runs a configured `command` under `bash --noprofile --norc`,
     /// which sources none of the user's shell startup files, so the command
     /// inherits only the sparse PATH `login` sets from /etc/paths. Running it
     /// through `zsh -lic` sources .zprofile (login) and .zshrc (interactive),
     /// restoring the full PATH — Homebrew's `brew shellenv` line lives there.
     static func loginShellWrapped(_ command: String) -> String {
-        // Single-quote the command for the shell, escaping embedded quotes.
         let quoted = "'" + command.replacingOccurrences(of: "'", with: "'\\''") + "'"
         return "/bin/zsh -lic \(quoted)"
     }
 
-    /// Single-quotes a string for the shell, escaping embedded quotes, so it can
-    /// be pasted into a shell line as one literal argument.
     private static func shellQuote(_ string: String) -> String {
         "'" + string.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// Opens a terminal tab at `path` running `command`: a new window when none
-    /// are open, otherwise a new tab in the front window. `terminal` selects the
-    /// AppleScript dialect.
     static func launch(path: String, command: String, terminal: Terminal) {
         let script: String
         switch terminal {
@@ -54,8 +37,6 @@ enum Launcher {
         try? process.run()
     }
 
-    /// Ghostty passes `command` as a config value, wrapped by `loginShellWrapped`
-    /// so it inherits the user's full PATH.
     private static func ghosttyScript(path: String, command: String) -> String {
         let path = appleScriptString(path)
         let command = appleScriptString(loginShellWrapped(command))
@@ -72,7 +53,6 @@ enum Launcher {
 
     /// iTerm has no working-directory/command config, so the shell line
     /// `cd <path>; clear; <command>` is written into a fresh window's session.
-    /// The whole line is one AppleScript string literal.
     private static func itermScript(path: String, command: String) -> String {
         let line = appleScriptString("cd \(shellQuote(path)); clear; \(command)")
         return """
@@ -85,9 +65,6 @@ enum Launcher {
         """
     }
 
-    /// Runs an already-interpolated raw `command` directly under a login+
-    /// interactive zsh, with no terminal window, in `path` as the working
-    /// directory.
     static func launchRaw(path: String, command: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")

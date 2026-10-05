@@ -1,12 +1,3 @@
-//
-//  MenuContent.swift
-//  Plunger
-//
-//  Builds the menu-bar menu tree. The top level lists saved paths; each opens a
-//  submenu of saved commands that launch on click. Below are management submenus
-//  for the reusable paths and commands lists.
-//
-
 import AppKit
 import Sparkle
 import SwiftUI
@@ -50,8 +41,6 @@ struct MenuContent: View {
     }
 }
 
-/// A "Check for Updates…" button that tracks Sparkle's `canCheckForUpdates`,
-/// so it dims while a check is already running or the updater is unavailable.
 private struct CheckForUpdatesButton: View {
     let updater: SPUUpdater
 
@@ -82,9 +71,6 @@ private struct FoldersInside: View {
     }
 }
 
-/// Lists saved commands; clicking one launches the (path, command) pair. Regular
-/// commands open a terminal; raw commands run directly with `{{path}}`/
-/// `{{command}}` interpolation.
 private struct CommandLauncher: View {
     @Bindable var store: ConfigStore
     let path: String

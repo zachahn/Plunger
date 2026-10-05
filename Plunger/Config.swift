@@ -1,15 +1,5 @@
-//
-//  Config.swift
-//  Plunger
-//
-//  The persisted state: pick-lists of paths and commands, stored as a
-//  property-list blob in macOS user defaults.
-//
-
 import Foundation
 
-/// Abbreviates the home directory to `~` for display. The underlying path is
-/// left untouched; this is purely cosmetic.
 func displayPath(_ path: String) -> String {
     let home = NSHomeDirectory()
     guard path == home || path.hasPrefix(home + "/") else { return path }
@@ -17,7 +7,6 @@ func displayPath(_ path: String) -> String {
 }
 
 struct Config: Codable {
-    /// The default HTTP server port.
     static let defaultPort: UInt16 = 54175
 
     /// The port a dev build always binds, ignoring the stored `port`. Dev and
@@ -28,8 +17,6 @@ struct Config: Codable {
     static let devPort: UInt16 = 54176
     #endif
 
-    /// The port the server actually binds. In release this is the stored `port`;
-    /// in a dev build it is always `devPort`, so the two builds never collide.
     var boundPort: UInt16 {
         #if DEBUG
         Self.devPort
@@ -38,11 +25,8 @@ struct Config: Codable {
         #endif
     }
 
-    /// The source networks allowed by default: this Mac only. Users open up LAN
-    /// or tailnet access from the HTTP Server settings tab.
     static let defaultAllowedPeers: Set<PeerCategory> = [.loopback]
 
-    /// The terminal a launch opens a tab in by default.
     static let defaultTerminal: Terminal = .ghostty
 
     var paths: [String] = []
@@ -51,25 +35,14 @@ struct Config: Codable {
 
     var commands: [String] = []
 
-    /// Commands that run directly (no terminal window) with `{{path}}` and
-    /// `{{command}}` interpolation. Deduplicated and order-preserving like the
-    /// other lists.
     var rawCommands: [String] = []
 
-    /// The terminal app a launch opens. Decodes to `defaultTerminal` for older
-    /// configs that predate this field.
     var terminal: Terminal = defaultTerminal
 
-    /// The port the local HTTP server binds. Decodes to `defaultPort` for older
-    /// stored configs that predate this field.
     var port: UInt16 = defaultPort
 
-    /// Source networks the server accepts connections from (on top of the token).
-    /// Decodes to `defaultAllowedPeers` for older configs that predate the field.
     var allowedPeers: Set<PeerCategory> = defaultAllowedPeers
 
-    /// Whether the HTTP server requires the bearer token. Decodes to `true` for
-    /// older configs that predate the field, preserving prior behavior.
     var authEnabled: Bool = true
 
     enum CodingKeys: String, CodingKey {
@@ -111,17 +84,11 @@ struct Config: Codable {
 }
 
 extension Array where Element == String {
-    /// Appends `value` unless it is empty or already present. The pick-lists
-    /// hold no blanks and no duplicates.
     mutating func appendUnique(_ value: String) {
         guard !value.isEmpty, !contains(value) else { return }
         append(value)
     }
 
-    /// Sorts case-insensitively for display. The stored order in ConfigStore
-    /// (insertion order) is left untouched; this is presentation only, and is
-    /// the one place every UI (menu bar, settings panel, web form) sorts
-    /// paths and commands, so they stay consistent.
     func sortedForDisplay() -> [String] {
         sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }

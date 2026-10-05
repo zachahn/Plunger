@@ -1,21 +1,5 @@
-//
-//  PeerFilter.swift
-//  Plunger
-//
-//  Decides whether an incoming connection's source IP is allowed, so the HTTP
-//  server can restrict access to chosen networks (loopback, Tailscale, LAN, or
-//  any) on top of the bearer token. The categories are independent: a peer is
-//  allowed if its IP falls in any enabled category. An empty set allows nothing
-//  — not even loopback — so "allow only what you check" is literal.
-//
-//  Matching is pure and works on a parsed IP, so it is unit-testable without a
-//  live socket. Tailscale hands every node an address in 100.64.0.0/10 (the
-//  CGNAT range), so that single CIDR identifies tailnet traffic.
-//
-
 import Foundation
 
-/// A source-network category the server may allow. Order is the display order.
 enum PeerCategory: String, CaseIterable, Codable, Identifiable {
     case loopback
     case tailscale
@@ -47,14 +31,10 @@ enum PeerCategory: String, CaseIterable, Codable, Identifiable {
 /// mapped IPv6 (`::ffff:a.b.c.d`) collapses to its 4-byte IPv4 form so a
 /// dual-stack peer matches IPv4 rules.
 struct PeerIP: Equatable {
-    /// 4 bytes for IPv4, 16 for IPv6.
     let bytes: [UInt8]
 
     var isIPv4: Bool { bytes.count == 4 }
 
-    /// Builds a PeerIP from raw address bytes (4 for IPv4, 16 for IPv6), as
-    /// NWEndpoint.Host's IPv4Address/IPv6Address rawValue supplies. Collapses an
-    /// IPv4-mapped IPv6 address to its 4-byte IPv4 form.
     init?(rawBytes: Data) {
         let all = [UInt8](rawBytes)
         if all.count == 4 {
@@ -87,9 +67,6 @@ struct PeerIP: Equatable {
         return nil
     }
 
-    /// Collapses an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`, prefix
-    /// `::ffff:0:0/96`) to its 4-byte IPv4 form; other 16-byte addresses pass
-    /// through unchanged.
     private static func collapseMapped(_ all: [UInt8]) -> [UInt8] {
         let prefix: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff]
         guard all.count == 16, Array(all.prefix(12)) == prefix else { return all }
@@ -97,12 +74,9 @@ struct PeerIP: Equatable {
     }
 }
 
-/// Which peers the server accepts. Pure decision logic; the server supplies the
-/// parsed peer IP.
 struct PeerFilter {
     let allowed: Set<PeerCategory>
 
-    /// Reports whether a peer at `ip` is allowed by the enabled categories.
     func allows(_ ip: PeerIP) -> Bool {
         if allowed.contains(.any) { return true }
         for category in allowed where Self.matches(ip, category) {

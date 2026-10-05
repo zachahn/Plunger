@@ -1,21 +1,6 @@
-//
-//  Interpolation.swift
-//  Plunger
-//
-//  Substitutes `{{name}}` placeholders in a template string with values from
-//  a lookup table. A single left-to-right scan, no regular expressions: an
-//  unknown key or an unterminated `{{` is left in the output verbatim rather
-//  than treated as an error.
-//
-
 import Foundation
 
 enum Interpolation {
-    /// Replaces each `{{name}}` in `template` with `values[name]`, trimming
-    /// whitespace inside the braces before the lookup. A placeholder whose
-    /// key is absent from `values` is left verbatim, braces included. A `{{`
-    /// with no matching `}}` ends substitution and the remainder of the
-    /// string is emitted unchanged.
     static func render(_ template: String, values: [String: String]) -> String {
         guard !template.isEmpty else { return "" }
 

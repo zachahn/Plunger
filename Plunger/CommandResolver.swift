@@ -1,32 +1,19 @@
-//
-//  CommandResolver.swift
-//  Plunger
-//
-//  Resolves a command's program to an absolute path. A GUI app launched from
-//  Finder inherits a minimal PATH that usually lacks Homebrew, so the common bin
-//  directories are searched explicitly.
-//
-
 import Foundation
 
 enum CommandResolver {
-    /// Searched when the program is not found on the process PATH.
+    // Finder-launched GUI apps inherit a minimal PATH that usually lacks Homebrew.
     private static let commonBinDirs = [
-        "/opt/homebrew/bin", // Apple Silicon Homebrew
-        "/usr/local/bin",    // Intel Homebrew
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
         "/usr/bin",
         "/bin",
         "/usr/sbin",
         "/sbin",
     ]
 
-    /// Looks up an absolute path for `program`. It tries the process PATH first,
-    /// then the common bin directories. The original value is returned when
-    /// nothing matches, so an unresolved command still launches and surfaces its
-    /// own error.
     static func resolveProgram(_ program: String) -> String {
         if program.contains("/") {
-            return program // already a path; leave it alone
+            return program
         }
         if let onPath = lookPath(program) {
             return onPath
@@ -45,8 +32,6 @@ enum CommandResolver {
         return program
     }
 
-    /// Rewrites the program in a command string with its absolute path. The first
-    /// token is resolved; the remaining arguments are preserved verbatim.
     static func resolveCommand(_ command: String) -> String {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return trimmed }
@@ -58,10 +43,6 @@ enum CommandResolver {
         return resolveProgram(trimmed)
     }
 
-    /// Reports whether `command`'s first token is itself an absolute path to an
-    /// existing executable file. Unlike `resolveProgram`, it does no PATH or
-    /// common-bin lookup: a bare name like `git` fails until the user presses
-    /// Resolve to turn it into an absolute path.
     static func programExists(_ command: String) -> Bool {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
@@ -74,7 +55,6 @@ enum CommandResolver {
             && !isDirectory.boolValue
     }
 
-    /// Walks the process PATH for an executable named `program`, like exec.LookPath.
     private static func lookPath(_ program: String) -> String? {
         guard let pathVariable = ProcessInfo.processInfo.environment["PATH"] else { return nil }
         let fileManager = FileManager.default

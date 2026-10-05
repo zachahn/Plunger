@@ -1,11 +1,3 @@
-//
-//  ConfigStore.swift
-//  Plunger
-//
-//  Owns the Config and persists it to UserDefaults. The struct is stored as a
-//  property-list blob under the "config" key.
-//
-
 import AppKit
 import Foundation
 import Observation
@@ -32,22 +24,15 @@ final class ConfigStore {
         load()
     }
 
-    // MARK: - Token
-
-    /// Replaces the HTTP server token with a fresh random one. Clients using the
-    /// old token stop working until they pick up the new value.
     func regenerateToken() {
         token = authToken.regenerate()
     }
 
-    /// Copies the current token to the general pasteboard.
     func copyToken() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(token, forType: .string)
     }
-
-    // MARK: - Read-only queries
 
     var launchablePaths: [String] {
         PathExpansion.launchable(
@@ -56,7 +41,6 @@ final class ConfigStore {
         )
     }
 
-    /// Reports whether `path` is one of the saved paths.
     func hasPath(_ path: String) -> Bool {
         launchablePaths.contains(path)
     }
@@ -65,19 +49,14 @@ final class ConfigStore {
         config.launchFoldersInside.contains(path)
     }
 
-    /// Reports whether `command` is one of the saved commands.
     func hasCommand(_ command: String) -> Bool {
         config.commands.contains(command)
     }
 
-    /// Reports whether `command` is one of the saved raw commands.
     func hasRawCommand(_ command: String) -> Bool {
         config.rawCommands.contains(command)
     }
 
-    // MARK: - Persistence
-
-    /// Reads the config from UserDefaults.
     private func load() {
         if let stored: Config = decode(Self.configKey) {
             config = stored
@@ -93,8 +72,6 @@ final class ConfigStore {
         guard let data = defaults.data(forKey: key) else { return nil }
         return try? PropertyListDecoder().decode(T.self, from: data)
     }
-
-    // MARK: - Mutations
 
     func addPath(_ path: String, launchFoldersInside: Bool = false) {
         config.paths.appendUnique(path)
@@ -112,9 +89,6 @@ final class ConfigStore {
         save()
     }
 
-    /// Rewrites `path` to `newPath` in place, preserving its position. A no-op
-    /// when `path` isn't saved, `newPath` is blank, or `newPath` is already
-    /// saved.
     func updatePath(_ path: String, to newPath: String, launchFoldersInside: Bool) {
         guard !newPath.isEmpty, newPath == path || !config.paths.contains(newPath) else { return }
         guard let index = config.paths.firstIndex(of: path) else { return }
@@ -132,9 +106,6 @@ final class ConfigStore {
         }
     }
 
-    /// Rewrites `command` to `newCommand` in place, preserving its position.
-    /// A no-op when `command` isn't saved, `newCommand` is blank, or
-    /// `newCommand` is already saved.
     func updateCommand(_ command: String, to newCommand: String) {
         guard !newCommand.isEmpty, newCommand == command || !config.commands.contains(newCommand) else { return }
         guard let index = config.commands.firstIndex(of: command) else { return }
@@ -153,9 +124,6 @@ final class ConfigStore {
         save()
     }
 
-    /// Rewrites `command` to `newCommand` among the raw commands, preserving its
-    /// position. A no-op when `command` isn't saved, `newCommand` is blank, or
-    /// `newCommand` is already saved.
     func updateRawCommand(_ command: String, to newCommand: String) {
         guard !newCommand.isEmpty, newCommand == command || !config.rawCommands.contains(newCommand) else { return }
         guard let index = config.rawCommands.firstIndex(of: command) else { return }
@@ -168,8 +136,6 @@ final class ConfigStore {
         save()
     }
 
-    /// Sets the terminal a launch opens. A no-op when unchanged. Takes effect on
-    /// the next launch; no restart needed.
     func setTerminal(_ terminal: Terminal) {
         guard terminal != config.terminal else { return }
         config.terminal = terminal
@@ -184,17 +150,12 @@ final class ConfigStore {
         save()
     }
 
-    /// Sets the source networks the server accepts. Takes effect on the next
-    /// connection; no restart needed, since the server reads it per request.
     func setAllowedPeers(_ peers: Set<PeerCategory>) {
         guard peers != config.allowedPeers else { return }
         config.allowedPeers = peers
         save()
     }
 
-    /// Sets whether the HTTP server requires the bearer token. Takes effect on
-    /// the next connection; no restart needed, since the server reads it per
-    /// request.
     func setAuthEnabled(_ enabled: Bool) {
         guard enabled != config.authEnabled else { return }
         config.authEnabled = enabled

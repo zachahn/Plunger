@@ -1,11 +1,3 @@
-//
-//  Terminal.swift
-//  Plunger
-//
-//  Names the terminal app a launch targets. `Launcher` uses `appName` in the
-//  AppleScript `tell application` clause; the UI uses `label` for display.
-//
-
 import Foundation
 
 enum Terminal: String, Codable, CaseIterable, Identifiable {
@@ -14,7 +6,6 @@ enum Terminal: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// Display name shown in the UI.
     var label: String {
         switch self {
         case .ghostty: return "Ghostty"
@@ -22,7 +13,6 @@ enum Terminal: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// Name used in AppleScript's `tell application "..."` clause.
     var appName: String {
         switch self {
         case .ghostty: return "Ghostty"

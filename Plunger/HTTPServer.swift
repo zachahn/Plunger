@@ -1,46 +1,12 @@
-//
-//  HTTPServer.swift
-//  Plunger
-//
-//  A dependency-free HTTP/1.1 server that serves one page: a form listing the
-//  saved paths and commands, posting back to itself to launch. It is strictly
-//  launch-only: it exposes read-only views of the saved lists plus
-//  Launcher.launch, and reaches no mutation method on the store. The listener
-//  binds every interface (0.0.0.0) on the configured port (default 54175; dev
-//  builds always bind 54176, ignoring the stored port), so
-//  the form is reachable from the LAN. Two guards sit in front: a peer
-//  filter (see PeerFilter) drops any connection whose source IP is not in an
-//  allowed network — loopback, Tailscale (100.64.0.0/10), LAN, or any — and the
-//  bearer token guards every authed route on top. The token travels over
-//  plaintext HTTP. The app runs without the App Sandbox, so binding the socket
-//  needs no entitlement. Changing the port calls restart() to rebind without
-//  relaunching; network changes take effect on the next connection.
-//
-//  Auth is HTTP Basic with the fixed username "plunger" and the generated token
-//  as the password, so a browser prompts once and caches it. A "Bearer
-//  plunger:<token>" header is accepted too.
-//
-//  Routes (one request per connection, no keep-alive):
-//    GET  /          -> 200 text/html (the launch form)      (auth, 401 challenge)
-//    POST /          -> launches, then serves the form with a flash (auth)
-//    GET  /style.css -> 200 text/css                         (no auth)
-//
-
 import Foundation
 import Network
 
-// MARK: - Request parsing
-
-/// A parsed HTTP/1.1 request: method, target, lowercased header map, and body.
 struct HTTPRequest: Equatable {
     var method: String
     var target: String
     var headers: [String: String]
     var body: Data
 
-    /// A username/password pair carried by the Authorization header. Both auth
-    /// styles encode the same pair: Basic as base64(user:pass), Bearer as the
-    /// plaintext "user:token". Returns nil when no usable credentials are present.
     var credentials: (username: String, password: String)? {
         guard let value = headers["authorization"] else { return nil }
 
@@ -58,7 +24,6 @@ struct HTTPRequest: Equatable {
         return nil
     }
 
-    /// Splits "username:password" on the first colon. Returns nil without a colon.
     private static func split(_ pair: String) -> (username: String, password: String)? {
         guard let colon = pair.firstIndex(of: ":") else { return nil }
         let username = String(pair[..<colon])
@@ -68,9 +33,6 @@ struct HTTPRequest: Equatable {
 }
 
 enum HTTPRequestParser {
-    /// Parses a complete request from `data`. Returns nil when the head is
-    /// malformed; callers answer nil with a 400. The head must be fully present
-    /// (terminated by CRLFCRLF); body length is taken from Content-Length.
     static func parse(_ data: Data) -> HTTPRequest? {
         let separator = Data("\r\n\r\n".utf8)
         guard let headEnd = data.range(of: separator) else { return nil }
@@ -100,8 +62,6 @@ enum HTTPRequestParser {
         return HTTPRequest(method: method, target: target, headers: headers, body: body)
     }
 
-    /// The Content-Length value, or 0 when absent. Returns nil when the header
-    /// is present but not a non-negative integer.
     static func contentLength(_ headers: [String: String]) -> Int? {
         guard let raw = headers["content-length"] else { return 0 }
         guard let length = Int(raw), length >= 0 else { return nil }
@@ -109,10 +69,6 @@ enum HTTPRequestParser {
     }
 }
 
-// MARK: - Responses
-
-/// A minimal HTTP response: status, reason phrase, a content type, a body, and
-/// any extra headers (the 401 challenge uses one).
 struct HTTPResponse: Equatable {
     var status: Int
     var reason: String
@@ -132,12 +88,10 @@ struct HTTPResponse: Equatable {
         return Data(head.utf8) + bodyData
     }
 
-    /// An HTML response. Defaults to 200 OK.
     static func html(_ markup: String, status: Int = 200, reason: String = "OK") -> HTTPResponse {
         HTTPResponse(status: status, reason: reason, contentType: "text/html; charset=utf-8", body: markup)
     }
 
-    /// A CSS response. Defaults to 200 OK.
     static func css(_ source: String, status: Int = 200, reason: String = "OK") -> HTTPResponse {
         HTTPResponse(status: status, reason: reason, contentType: "text/css; charset=utf-8", body: source)
     }
@@ -146,7 +100,6 @@ struct HTTPResponse: Equatable {
     static let notFound = HTTPResponse(status: 404, reason: "Not Found", body: "not found")
     static let methodNotAllowed = HTTPResponse(status: 405, reason: "Method Not Allowed", body: "method not allowed")
 
-    /// A 401 that makes the browser show its Basic-auth login prompt.
     static let unauthorized = HTTPResponse(
         status: 401,
         reason: "Unauthorized",
@@ -156,24 +109,13 @@ struct HTTPResponse: Equatable {
     )
 }
 
-// MARK: - Routing
-
-/// What the router decided a valid launch request should do. The router stops
-/// here so its decisions are testable without spawning Ghostty. `launch` carries
-/// the page to send afterward, so the browser gets the form back with a flash.
 enum RouteOutcome: Equatable {
     case respond(HTTPResponse)
-    /// A terminal launch: open `command` in `terminal` at `path`.
     case launch(path: String, command: String, terminal: Terminal, success: HTTPResponse)
-    /// A raw launch: run the already-interpolated `command` directly at `path`,
-    /// no terminal window.
     case launchRaw(path: String, command: String, success: HTTPResponse)
 }
 
-/// Pure routing: maps a request plus a read-only store view to an outcome. It
-/// performs no I/O, so tests drive it directly.
 enum Router {
-    /// A read-only view of the store, captured on the main actor before routing.
     struct StoreView {
         var token: String
         var authEnabled: Bool
@@ -186,7 +128,6 @@ enum Router {
         var hasRawCommand: (String) -> Bool
     }
 
-    /// The fixed username both auth styles must carry.
     static let username = "plunger"
 
     static func route(_ request: HTTPRequest, store: StoreView) -> RouteOutcome {
@@ -209,11 +150,6 @@ enum Router {
         }
     }
 
-    /// Accepts either auth style. Both encode (username, password); the username
-    /// must equal `plunger` and the password must equal the live token. The token
-    /// check is constant-time so a network attacker can't recover it byte by byte
-    /// from response-timing differences. When auth is turned off, every request
-    /// passes without checking credentials.
     private static func authorized(_ request: HTTPRequest, store: Router.StoreView) -> Bool {
         guard store.authEnabled else { return true }
         guard let credentials = request.credentials else { return false }
@@ -227,10 +163,6 @@ enum Router {
         return usernameOK && tokenOK
     }
 
-    /// Compares two strings in time that depends only on the token's length, not
-    /// on where the first differing byte falls, so token comparison leaks nothing
-    /// through timing. A length mismatch folds into the result rather than
-    /// returning early. Empty tokens never match.
     private static func constantTimeEqual(_ candidate: String, _ token: String) -> Bool {
         let a = Array(candidate.utf8)
         let b = Array(token.utf8)
@@ -277,10 +209,6 @@ enum Router {
     }
 }
 
-// MARK: - Form decoding
-
-/// Decodes an `application/x-www-form-urlencoded` body into fields. Splits on `&`
-/// then `=`, replaces `+` with space, and percent-decodes each side.
 enum FormDecoder {
     static func decode(_ body: Data) -> [String: String] {
         guard let raw = String(data: body, encoding: .utf8) else { return [:] }
@@ -301,14 +229,7 @@ enum FormDecoder {
     }
 }
 
-// MARK: - Templates
-
-/// Loads a file from Resources/ in the app bundle and substitutes `{{token}}`
-/// placeholders with caller-supplied values. No loops, no conditionals — just
-/// literal replacement, since every page here is a handful of fixed slots.
 enum Template {
-    /// Reads `name` (e.g. "form.html") from the bundle. Traps if the resource
-    /// is missing, since that's a packaging bug, not a runtime condition.
     static func load(_ name: String) -> String {
         let parts = name.split(separator: ".", maxSplits: 1)
         guard let url = Bundle.main.url(forResource: String(parts[0]), withExtension: String(parts[1])),
@@ -318,7 +239,6 @@ enum Template {
         return contents
     }
 
-    /// Replaces every `{{key}}` in `template` with its value from `values`.
     static func render(_ template: String, _ values: [String: String]) -> String {
         var result = template
         for (key, value) in values {
@@ -328,11 +248,6 @@ enum Template {
     }
 }
 
-// MARK: - HTML
-
-/// Builds the pages the browser sees: the launch form and the result of a
-/// launch. Markup lives in Resources/*.html, rendered via `Template`; styled
-/// via a linked stylesheet at /style.css; no JavaScript.
 enum HTMLPage {
     enum Flash: Equatable {
         case launched(path: String, command: String)
@@ -348,14 +263,10 @@ enum HTMLPage {
         }
     }
 
-    /// Served at GET /style.css.
     static let stylesheet = Template.load("style.css")
 
-    /// Page templates, read from the bundle once at first use rather than per
-    /// request.
     private static let formTemplate = Template.load("form.html")
 
-    /// HTML-escapes text interpolated into markup or an attribute value.
     static func escape(_ text: String) -> String {
         text.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
@@ -363,11 +274,6 @@ enum HTMLPage {
             .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
-    /// The launch form: two dropdowns posting back to /. Regular commands open a
-    /// terminal; raw commands run directly. The two kinds are split into separate
-    /// `<optgroup>` sections. An empty list renders an empty select plus a note
-    /// pointing to the menu bar. A submit re-renders this page with `flash`
-    /// reporting what happened.
     static func form(
         paths: [String],
         commands: [String],
@@ -390,59 +296,38 @@ enum HTMLPage {
         ])
     }
 
-    /// The body of the 401 challenge, shown before the browser's login prompt.
     static let unauthorized = Template.load("unauthorized.html")
 
-    /// Renders `<option value="…">label</option>` for each value. The value is the
-    /// stored string the router validates against; the label is for display.
     private static func options(_ values: [String], label: @escaping (String) -> String) -> String {
         values.map { value in
             "<option value=\"\(escape(value))\">\(escape(label(value)))</option>"
         }.joined()
     }
 
-    /// Wraps rendered options in an `<optgroup>` with `label`. Returns an empty
-    /// string when there are no options, so an empty command list adds no group.
     private static func optgroup(_ label: String, _ options: String) -> String {
         options.isEmpty ? "" : "<optgroup label=\"\(escape(label))\">\(options)</optgroup>"
     }
 }
 
-// MARK: - Server
-
 @MainActor
 @Observable
 final class HTTPServer {
-    /// This host's name, resolved once. The value never changes for the process,
-    /// and `hostName` does a system lookup, so callers on view-render paths reuse
-    /// this rather than resolving per render.
     private nonisolated static let hostName = ProcessInfo.processInfo.hostName
 
-    /// The address for a given port. The listener binds every interface, so a
-    /// LAN client reaches it at this host's name; the loopback form still works
-    /// locally.
     nonisolated static func url(port: UInt16) -> String {
         "http://\(hostName):\(port)"
     }
 
-    /// Whether the listener is bound. `.failed` carries the port that could not
-    /// be bound, so the UI can explain what went wrong (usually a port in use).
     enum Status: Equatable {
         case stopped
         case running
         case failed(port: UInt16)
     }
 
-    /// The current bind state, updated from the listener's state handler. UI
-    /// observes this to show a bind failure.
     private(set) var status: Status = .stopped
 
-    /// A read-only snapshot taken on the main actor before routing, so the
-    /// off-actor connection handlers never touch the @MainActor store directly.
     private let snapshot: @MainActor () -> Router.StoreView
-    /// Reads the configured port on the main actor at bind time.
     private let portProvider: @MainActor () -> UInt16
-    /// Reads the allowed source networks on the main actor per connection.
     private let filterProvider: @MainActor () -> PeerFilter
     private let queue = DispatchQueue(label: "com.zachahn.Plunger.http")
     private var listener: NWListener?
@@ -465,9 +350,6 @@ final class HTTPServer {
         self.filterProvider = { PeerFilter(allowed: store.config.allowedPeers) }
     }
 
-    /// Binds 0.0.0.0 on the configured port (every interface) and begins
-    /// accepting connections. Bind failures set `status` to `.failed`; the app
-    /// keeps running without the server.
     func start() {
         guard listener == nil else { return }
         let configuredPort = portProvider()
@@ -490,8 +372,6 @@ final class HTTPServer {
         listener.start(queue: queue)
     }
 
-    /// Tears down the current listener and rebinds on the configured port. Call
-    /// after changing the port so the change takes effect without relaunching.
     func restart() {
         listener?.cancel()
         listener = nil
@@ -499,8 +379,6 @@ final class HTTPServer {
         start()
     }
 
-    /// Mirrors the listener's state into `status` on the main actor. `.ready`
-    /// means the bind succeeded; `.failed` usually means the port is in use.
     private nonisolated func listenerStateChanged(_ state: NWListener.State, port: UInt16) {
         switch state {
         case .ready:
@@ -517,9 +395,6 @@ final class HTTPServer {
     }
 
     private nonisolated func handle(_ connection: NWConnection) {
-        // Drop the connection unless its source IP is in an allowed category.
-        // Filtering here, before any bytes are read, keeps a blocked peer from
-        // reaching the router or the token check.
         let peer = Self.peerIP(of: connection)
         Task { @MainActor in
             let filter = filterProvider()
@@ -532,8 +407,6 @@ final class HTTPServer {
         }
     }
 
-    /// Extracts the remote peer's IP from a connection's endpoint, or nil when
-    /// it can't be read (in which case the caller drops the connection).
     private nonisolated static func peerIP(of connection: NWConnection) -> PeerIP? {
         switch connection.endpoint {
         case let .hostPort(host, _):
@@ -552,7 +425,6 @@ final class HTTPServer {
         }
     }
 
-    /// Reads until the head and the declared body are both present, then routes.
     private nonisolated func receive(_ connection: NWConnection, accumulated: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] chunk, _, isComplete, error in
             guard let self else { return }
@@ -572,9 +444,6 @@ final class HTTPServer {
                     return
                 }
                 if request.body.count >= declared {
-                    // Trim any bytes past the declared length (a lying client or a
-                    // pipelined second request) so the form decoder sees only
-                    // this request's body.
                     request.body = request.body.prefix(declared)
                     self.dispatch(request, on: connection)
                     return
@@ -582,7 +451,6 @@ final class HTTPServer {
             }
 
             if isComplete {
-                // Connection closed before a full request arrived.
                 if parsed == nil {
                     HTTPServer.respond(connection, with: .badRequest)
                 } else {
@@ -595,8 +463,6 @@ final class HTTPServer {
         }
     }
 
-    /// Hops to the main actor to snapshot the store, routes, and either writes a
-    /// response or launches and then writes the success response.
     private nonisolated func dispatch(_ request: HTTPRequest, on connection: NWConnection) {
         Task { @MainActor [snapshot] in
             let view = snapshot()

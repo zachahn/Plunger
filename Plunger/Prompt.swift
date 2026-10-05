@@ -1,16 +1,6 @@
-//
-//  Prompt.swift
-//  Plunger
-//
-//  Native system panels used outside the SwiftUI edit panel.
-//
-
 import AppKit
 
 enum Prompt {
-    /// Shows the OS directory picker and returns the chosen directory's path.
-    /// Returns nil when the user cancels. `initialDirectory`, when given, opens
-    /// the picker there instead of its default location, for editing in place.
     @MainActor
     static func directory(title: String, initialDirectory: String? = nil) -> String? {
         let panel = NSOpenPanel()

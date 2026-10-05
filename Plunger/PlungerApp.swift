@@ -1,11 +1,3 @@
-//
-//  PlungerApp.swift
-//  Plunger
-//
-//  A menu-bar app that launches Ghostty terminal tabs from saved
-//  (path, command) pairs.
-//
-
 import Sparkle
 import SwiftUI
 
@@ -15,9 +7,6 @@ struct PlungerApp: App {
     @State private var server: HTTPServer
     @State private var editPanel: EditPanelController
 
-    /// Owns the Sparkle update lifecycle. `startingUpdater: true` lets Sparkle
-    /// run its default background check schedule; the menu's "Check for
-    /// Updates…" item drives manual checks through the same controller.
     private let updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
         updaterDelegate: nil,
@@ -47,8 +36,6 @@ struct PlungerApp: App {
     /// hook to start the always-on server without an AppDelegate.
     private var scenePhaseStarted: Bool { true }
 
-    /// The menu-bar label. Shows the original PNG in development and a more
-    /// expected icon in production.
     @ViewBuilder
     private var menuBarLabel: some View {
         #if DEBUG
