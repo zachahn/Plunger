@@ -7,7 +7,8 @@
 #   "SCHEME": "MyApp",
 #   "TEAM_ID": "YOUR_TEAM_ID",
 #   "NOTARY_PROFILE": "my-notary-profile",
-#   "SPARKLE_ACCOUNT": "com.example.MyApp"
+#   "SPARKLE_ACCOUNT": "com.example.MyApp",
+#   "APPCAST_BRANCH": "main"
 # }
 # Environment variables take precedence. release:setup can add /release.json to .gitignore.
 # Credentials and the Sparkle private key stay in Keychain.
@@ -32,11 +33,11 @@
 #
 # Stages can also run independently: release:run:preflight, release:run:archive,
 # release:run:export, release:run:zip, release:run:notarize,
-# release:run:appcast, release:run:tag, release:run:github.
+# release:run:appcast, release:run:tag, release:run:github, release:run:push.
 # This workflow builds a universal macOS app with automatic Developer ID signing,
-# notarizes a ZIP, and publishes a regular GitHub release marked latest.
-# The app's SUFeedURL must be:
-# https://github.com/<owner>/<repo>/releases/latest/download/appcast.xml
+# notarizes a ZIP, publishes a regular GitHub release marked latest, then commits
+# appcast.xml to APPCAST_BRANCH and pushes it. The app's SUFeedURL must be:
+# https://raw.githubusercontent.com/<owner>/<repo>/<APPCAST_BRANCH>/appcast.xml
 # SUPublicEDKey must match the Sparkle key stored under SPARKLE_ACCOUNT.
 # Commit and push source changes before releasing. The tag stage creates and
 # pushes v<marketing-version> for the archived commit.
@@ -89,6 +90,7 @@ ARCHIVE = File.join(BUILD_DIR, "release.xcarchive")
 EXPORT_DIR = File.join(BUILD_DIR, "export")
 DIST_DIR = File.join(BUILD_DIR, "dist")
 APPCAST = File.join(DIST_DIR, "appcast.xml")
+REPO_APPCAST = File.join(ROOT, "appcast.xml")
 SOURCE_COMMIT = File.join(BUILD_DIR, "release-source-commit")
 MANIFEST = File.expand_path(setting("MANIFEST", "Project.swift"), ROOT)
 Dir.chdir(ROOT)
@@ -284,6 +286,18 @@ def download_prefix
   "https://github.com/#{gh_repo}/releases/download/#{tag}/"
 end
 
+def appcast_branch
+  setting("APPCAST_BRANCH")
+end
+
+def feed_url
+  "https://raw.githubusercontent.com/#{gh_repo}/#{appcast_branch}/appcast.xml"
+end
+
+def current_branch
+  capture!("git", "rev-parse", "--abbrev-ref", "HEAD").strip
+end
+
 # Tuist resolves Sparkle and its tools here, pinned by Package.resolved.
 def sparkle_bin_dir
   File.expand_path(setting("SPARKLE_BIN_DIR", "Tuist/.build/artifacts/sparkle/Sparkle/bin"), ROOT)
@@ -315,7 +329,7 @@ end
 
 # ---- tasks -----------------------------------------------------------------
 
-desc "Full release: preflight → archive → export → zip → notarize → appcast → tag → GitHub publish"
+desc "Full release: preflight → archive → export → zip → notarize → appcast → tag → GitHub publish → push appcast"
 task release: %w[
   release:run:preflight
   release:run:archive
@@ -325,6 +339,7 @@ task release: %w[
   release:run:appcast
   release:run:tag
   release:run:github
+  release:run:push
 ] do
   ok "release #{tag} published"
 end
@@ -501,9 +516,11 @@ namespace :release do
       problems = []
       ask = ->(label, ok_cond) { ok_cond ? ok(label) : (problems << label) }
 
-      %w[SCHEME TEAM_ID NOTARY_PROFILE SPARKLE_ACCOUNT].each { |key| setting(key) }
+      %w[SCHEME TEAM_ID NOTARY_PROFILE SPARKLE_ACCOUNT APPCAST_BRANCH].each { |key| setting(key) }
       gh_repo
       clean_source!
+      # The push stage commits appcast.xml on top of the archived commit.
+      halt("on branch #{current_branch}; check out #{appcast_branch} before releasing") unless current_branch == appcast_branch
       notes = optional_setting("RELEASE_NOTES")
       halt("missing RELEASE_NOTES file: #{notes}") if notes && !File.file?(File.expand_path(notes, ROOT))
       sh! "tuist", "install"
@@ -640,9 +657,12 @@ namespace :release do
       sh! "xcrun", "stapler", "validate", app
       public_key = capture!(File.join(sparkle_bin_dir, "generate_keys"), "--account", setting("SPARKLE_ACCOUNT"), "-p").strip
       halt("Sparkle Keychain key does not match the app's public key") unless public_key == plist("SUPublicEDKey")
-      expected_feed = "https://github.com/#{gh_repo}/releases/latest/download/appcast.xml"
-      halt("App feed URL does not match GH_REPO") unless plist("SUFeedURL") == expected_feed
+      halt("App feed URL does not match #{feed_url}") unless plist("SUFeedURL") == feed_url
 
+      # generate_appcast updates an appcast already in the archives directory, so
+      # seed it with the committed feed to keep earlier versions' items.
+      FileUtils.rm_f(APPCAST)
+      FileUtils.cp(REPO_APPCAST, APPCAST) if File.exist?(REPO_APPCAST)
       sh! generate_appcast_bin,
         "--account", setting("SPARKLE_ACCOUNT"),
         "--versions", build_version,
@@ -669,7 +689,7 @@ namespace :release do
       ok "tag #{tag} points to archived commit #{commit} on GitHub"
     end
 
-    desc "publish a regular GitHub release with the ZIP, checksum, and appcast"
+    desc "publish a regular GitHub release with the ZIP and checksum"
     task :github do
       step "publishing the GitHub release"
       halt("missing ZIP or appcast — run earlier steps first") unless File.exist?(zip_path) && File.exist?(APPCAST)
@@ -689,10 +709,11 @@ namespace :release do
         "--verify", zip_path, enclosure.attributes["sparkle:edSignature"]
       Dir.chdir(DIST_DIR) { sh! "shasum", "-a", "256", "-c", "#{zip_name}.sha256" }
 
-      # Stage assets in a draft so the feed becomes public only after upload succeeds.
+      # Stage assets in a draft so the release becomes public only after upload succeeds.
       # Existing public assets must stay immutable; reruns may replace draft assets.
+      # The appcast is published separately by release:run:push.
       existing = release_list.find { |release| release["tag_name"] == tag }
-      assets = [zip_path, "#{zip_path}.sha256", APPCAST]
+      assets = [zip_path, "#{zip_path}.sha256"]
       if existing
         halt("#{tag} is already published; bump the version first") unless existing["draft"]
         sh! "gh", "release", "upload", tag, *assets, "--repo", gh_repo, "--clobber"
@@ -712,8 +733,30 @@ namespace :release do
       end
       sh! "gh", "release", "edit", tag, "--repo", gh_repo,
         "--draft=false", "--prerelease=false", "--latest"
-      ok "GitHub release #{tag} published with #{zip_name} and appcast.xml"
-      note "Sparkle feed: https://github.com/#{gh_repo}/releases/latest/download/appcast.xml"
+      ok "GitHub release #{tag} published with #{zip_name}"
+    end
+
+    desc "commit appcast.xml to APPCAST_BRANCH and push it"
+    task :push do
+      step "committing and pushing appcast.xml"
+      halt("missing appcast — run `rake release:run:appcast` first") unless File.exist?(APPCAST)
+      halt("on branch #{current_branch}; check out #{appcast_branch} to publish the appcast") unless current_branch == appcast_branch
+      clean_source!
+      # The feed goes live on push, so publish it only after the release assets exist.
+      published = releases.find { |release| release["tag_name"] == tag }
+      halt("GitHub release #{tag} is not published — run `rake release:run:github` first") unless published && !published["draft"]
+      # A rerun after a failed push finds the appcast already committed.
+      if File.exist?(REPO_APPCAST) && FileUtils.identical?(APPCAST, REPO_APPCAST)
+        note "appcast.xml already committed"
+      else
+        verify_archive_source!
+        FileUtils.cp(APPCAST, REPO_APPCAST)
+        sh! "git", "add", "--", REPO_APPCAST
+        sh! "git", "commit", "-m", "Publish appcast for #{tag}", "--", REPO_APPCAST
+      end
+      sh! "git", "push", "origin", "HEAD:refs/heads/#{appcast_branch}"
+      ok "appcast.xml for #{tag} pushed to #{appcast_branch}"
+      note "Sparkle feed: #{feed_url}"
     end
   end
 end
