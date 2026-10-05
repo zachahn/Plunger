@@ -34,7 +34,7 @@
 #
 # Stages can also run independently: release:run:preflight, release:run:archive,
 # release:run:export, release:run:zip, release:run:notarize,
-# release:run:appcast, release:run:tag, release:run:push, release:run:github.
+# release:run:appcast, release:run:push, release:run:tag, release:run:github.
 # This workflow builds a universal macOS app with automatic Developer ID signing,
 # notarizes a ZIP, and publishes a regular GitHub release marked latest.
 # Without APPCAST_BRANCH, appcast.xml is a release asset and SUFeedURL must be:
@@ -42,9 +42,13 @@
 # With APPCAST_BRANCH, the push stage commits appcast.xml to that branch and
 # pushes it before the GitHub release is created, and SUFeedURL must be:
 # https://raw.githubusercontent.com/<owner>/<repo>/<APPCAST_BRANCH>/appcast.xml
+# If HEAD is this version's unpushed release:bump commit, the push stage amends
+# it to carry appcast.xml and renames it "Release v<marketing-version>";
+# otherwise appcast.xml gets its own commit with that message.
 # SUPublicEDKey must match the Sparkle key stored under SPARKLE_ACCOUNT.
-# Commit and push source changes before releasing. The tag stage creates and
-# pushes v<marketing-version> for the archived commit.
+# Commit source changes before releasing. The tag stage creates and pushes
+# v<marketing-version> for the release commit: the archived commit, plus
+# appcast.xml with APPCAST_BRANCH.
 # release:bump supports literal string MARKETING_VERSION and numeric string
 # CURRENT_PROJECT_VERSION entries in the Tuist manifest; all matches are updated.
 
@@ -246,27 +250,40 @@ def remote_tag_commit
   object.fetch("sha")
 end
 
+# Returns the commit to tag: the archived commit, or with APPCAST_BRANCH, the
+# commit the push stage made from it by adding appcast.xml.
 def verify_archive_source!
   clean_source!
   halt("missing archive source record — run `rake release:run:archive` first") unless File.file?(SOURCE_COMMIT)
   commit = File.read(SOURCE_COMMIT).strip
   halt("checkout changed since archive; rebuild the release") unless source_commit == commit || only_appcast_since?(commit)
-  commit
+  source_commit
 end
 
-# With APPCAST_BRANCH, the push stage commits appcast.xml on top of the archived
-# commit before the GitHub release exists; that is the only change allowed.
+# Compare trees rather than ancestry: the push stage may amend the archived
+# commit, so it is no longer an ancestor, but appcast.xml must be the only change.
 def only_appcast_since?(commit)
   return false unless appcast_branch
-  return false unless system("git", "merge-base", "--is-ancestor", commit, "HEAD")
   appcast_path = capture!("git", "rev-parse", "--show-prefix").strip + File.basename(REPO_APPCAST)
   capture!("git", "diff", "--name-only", commit, "HEAD").split("\n") == [appcast_path]
+end
+
+def appcast_committed?
+  File.exist?(APPCAST) && File.exist?(REPO_APPCAST) && FileUtils.identical?(APPCAST, REPO_APPCAST)
+end
+
+# The release:bump commit for this version, not yet on any remote branch, can
+# absorb appcast.xml so one commit carries the whole release.
+def unpushed_bump_commit?
+  bump_message = format(DEFAULT_BUMP_COMMIT_MESSAGE, marketing_version: marketing_version, build_version: build_version)
+  capture!("git", "log", "-1", "--format=%s").strip == bump_message &&
+    capture!("git", "branch", "-r", "--contains", "HEAD").strip.empty?
 end
 
 def verify_release_source!
   commit = verify_archive_source!
   remote_commit = remote_tag_commit
-  halt("remote tag #{tag} does not point to archived commit #{commit}") unless remote_commit == commit
+  halt("remote tag #{tag} does not point to release commit #{commit}") unless remote_commit == commit
 end
 
 # Read a build-setting value from the exported .app's Info.plist.
@@ -347,7 +364,7 @@ end
 
 # ---- tasks -----------------------------------------------------------------
 
-desc "Full release: preflight → archive → export → zip → notarize → appcast → tag → push appcast → GitHub publish"
+desc "Full release: preflight → archive → export → zip → notarize → appcast → push appcast → tag → GitHub publish"
 task release: %w[
   release:run:preflight
   release:run:archive
@@ -355,8 +372,8 @@ task release: %w[
   release:run:zip
   release:run:notarize
   release:run:appcast
-  release:run:tag
   release:run:push
+  release:run:tag
   release:run:github
 ] do
   ok "release #{tag} published"
@@ -537,7 +554,7 @@ namespace :release do
       %w[SCHEME TEAM_ID NOTARY_PROFILE SPARKLE_ACCOUNT].each { |key| setting(key) }
       gh_repo
       clean_source!
-      # The push stage commits appcast.xml on top of the archived commit.
+      # The push stage commits appcast.xml on this branch.
       if appcast_branch && current_branch != appcast_branch
         halt("on branch #{current_branch}; check out #{appcast_branch} before releasing")
       end
@@ -696,17 +713,19 @@ namespace :release do
 
     desc "tag the archived commit and push the tag to origin"
     task :tag do
-      step "tagging the archived commit"
+      step "tagging the release commit"
+      # The push stage may amend the archived commit, so tag only after it runs.
+      halt("appcast.xml is not committed — run `rake release:run:push` first") if appcast_branch && !appcast_committed?
       commit = verify_archive_source!
       if system("git", "show-ref", "--verify", "--quiet", "refs/tags/#{tag}")
         local_commit = capture!("git", "rev-parse", "refs/tags/#{tag}^{commit}").strip
-        halt("local tag #{tag} does not point to archived commit #{commit}") unless local_commit == commit
+        halt("local tag #{tag} does not point to release commit #{commit}") unless local_commit == commit
       else
         sh! "git", "tag", tag, commit
       end
       sh! "git", "push", "origin", "refs/tags/#{tag}"
       verify_release_source!
-      ok "tag #{tag} points to archived commit #{commit} on GitHub"
+      ok "tag #{tag} points to release commit #{commit} on GitHub"
     end
 
     desc "publish a regular GitHub release with the ZIP, checksum, and (without APPCAST_BRANCH) appcast"
@@ -770,12 +789,16 @@ namespace :release do
       verify_archive_source!
       # The feed goes live on push, before release:run:github uploads the ZIP it
       # points to. A rerun after a failed push finds the appcast already committed.
-      if File.exist?(REPO_APPCAST) && FileUtils.identical?(APPCAST, REPO_APPCAST)
+      if appcast_committed?
         note "appcast.xml already committed"
       else
         FileUtils.cp(APPCAST, REPO_APPCAST)
         sh! "git", "add", "--", REPO_APPCAST
-        sh! "git", "commit", "-m", "Release #{tag}", "--", REPO_APPCAST
+        if unpushed_bump_commit?
+          sh! "git", "commit", "--amend", "-m", "Release #{tag}", "--", REPO_APPCAST
+        else
+          sh! "git", "commit", "-m", "Release #{tag}", "--", REPO_APPCAST
+        end
       end
       sh! "git", "push", "origin", "HEAD:refs/heads/#{appcast_branch}"
       ok "appcast.xml for #{tag} pushed to #{appcast_branch}"
